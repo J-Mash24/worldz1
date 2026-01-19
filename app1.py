@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
-
 # --------------------------------------------------
 # Page setup
 # --------------------------------------------------
@@ -16,9 +15,8 @@ st.set_page_config(layout="wide")
 st.title("Live Population Metrics (Estimated)")
 st.caption("Based on World Bank data with interpolated demographic rates")
 
-# refresh every 5 seconds (Streamlit-native)
+# auto refresh every 5 seconds
 st_autorefresh(interval=5_000, key="refresh")
-
 
 # --------------------------------------------------
 # Data helpers
@@ -75,7 +73,7 @@ GLOBAL_DEATHS = 60_000_000
 SECONDS_PER_YEAR = 365 * 24 * 3600
 
 # --------------------------------------------------
-# Session timing
+# Session timing (persists across reruns)
 # --------------------------------------------------
 if "start_time" not in st.session_state:
     st.session_state.start_time = time.time()
@@ -89,8 +87,17 @@ elapsed = time.time() - st.session_state.start_time
 # --------------------------------------------------
 # Compute metrics per country
 # --------------------------------------------------
-today_data = {"Births Today": [], "Deaths Today": [], "Growth Today": []}
-year_data = {"Births This Year": [], "Deaths This Year": [], "Growth This Year": []}
+today_data = {
+    "Births Today": [],
+    "Deaths Today": [],
+    "Growth Today": [],
+}
+
+year_data = {
+    "Births This Year": [],
+    "Deaths This Year": [],
+    "Growth This Year": [],
+}
 
 for name in selected_names:
     pop = country_pops[name]
@@ -107,64 +114,86 @@ for name in selected_names:
     today_data["Deaths Today"].append(deaths_ps * elapsed)
     today_data["Growth Today"].append(growth_ps * elapsed)
 
-    year_data["Births This Year"].append(births_ps * st.session_state.year_seconds + births_ps * elapsed)
-    year_data["Deaths This Year"].append(deaths_ps * st.session_state.year_seconds + deaths_ps * elapsed)
-    year_data["Growth This Year"].append(growth_ps * st.session_state.year_seconds + growth_ps * elapsed)
+    year_data["Births This Year"].append(
+        births_ps * st.session_state.year_seconds + births_ps * elapsed
+    )
+    year_data["Deaths This Year"].append(
+        deaths_ps * st.session_state.year_seconds + deaths_ps * elapsed
+    )
+    year_data["Growth This Year"].append(
+        growth_ps * st.session_state.year_seconds + growth_ps * elapsed
+    )
 
 # --------------------------------------------------
-# Tabs layout
+# Auto-scaling Y-axis values
+# --------------------------------------------------
+max_today = max(max(values) for values in today_data.values())
+max_year = max(max(values) for values in year_data.values())
+
+# --------------------------------------------------
+# Charts
 # --------------------------------------------------
 tab1, tab2 = st.tabs(["Charts", "Map"])
 
-# --------------------------------------------------
+# =======================
 # TAB 1 — Charts
-# --------------------------------------------------
+# =======================
 with tab1:
     col1, col2 = st.columns(2)
 
+    # ---- TODAY ----
     with col1:
         fig_today = go.Figure()
-        for metric, color in zip(
-            today_data.keys(),
-            ["#2ecc71", "#e74c3c", "#3498db"],
-        ):
+
+        for metric in today_data:
+            values = today_data[metric]
             fig_today.add_bar(
                 name=metric,
                 x=selected_names,
-                y=today_data[metric],
+                y=values,
+                text=[f"{int(v):,}" for v in values],
+                textposition="outside",
             )
 
         fig_today.update_layout(
             title="Today (Live Estimated)",
             barmode="group",
             yaxis_title="People",
+            yaxis_range=[0, max_today * 1.25],
+            uniformtext_minsize=10,
+            uniformtext_mode="hide",
         )
 
         st.plotly_chart(fig_today, width="stretch")
 
+    # ---- THIS YEAR ----
     with col2:
         fig_year = go.Figure()
-        for metric, color in zip(
-            year_data.keys(),
-            ["#27ae60", "#c0392b", "#2980b9"],
-        ):
+
+        for metric in year_data:
+            values = year_data[metric]
             fig_year.add_bar(
                 name=metric,
                 x=selected_names,
-                y=year_data[metric],
+                y=values,
+                text=[f"{int(v):,}" for v in values],
+                textposition="outside",
             )
 
         fig_year.update_layout(
             title="This Year (Live Estimated)",
             barmode="group",
             yaxis_title="People",
+            yaxis_range=[0, max_year * 1.15],
+            uniformtext_minsize=10,
+            uniformtext_mode="hide",
         )
 
         st.plotly_chart(fig_year, width="stretch")
 
-# --------------------------------------------------
+# =======================
 # TAB 2 — Map
-# --------------------------------------------------
+# =======================
 with tab2:
     map_metric = st.selectbox(
         "Map metric",
