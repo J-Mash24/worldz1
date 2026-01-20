@@ -51,14 +51,27 @@ def get_countries():
 @st.cache_data
 def get_indicator(code, indicator):
     url = f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json"
-    r = requests.get(url, timeout=10)
-    js = r.json()
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+    except requests.RequestException:
+        return None
+
+    try:
+        js = r.json()
+    except ValueError:
+        # Not JSON (HTML / empty / error page)
+        return None
+
     if not isinstance(js, list) or len(js) < 2 or js[1] is None:
         return None
+
     for d in js[1]:
-        if d["value"] is not None:
+        if d.get("value") is not None:
             return d["value"]
+
     return None
+
 
 @st.cache_data
 def get_time_series(code, indicator):
