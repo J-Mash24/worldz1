@@ -1,11 +1,10 @@
 
 import time
 import requests
-from datetime import datetime
 import plotly.graph_objects as go
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 import pandas as pd
+from streamlit_autorefresh import st_autorefresh
 
 # ==================================================
 # Page setup
@@ -14,11 +13,11 @@ st.set_page_config(layout="wide")
 st.title("Global Country Comparison Dashboard")
 
 # ==================================================
-# MODE SWITCH (CRITICAL)
+# MODE SWITCH
 # ==================================================
 mode = st.sidebar.radio(
     "Dashboard mode",
-    ["-- Live (Demographics)", "- Static (Full Analysis)"],
+    ["-- Live (Demographics)", "- Static (Full Analysis)"]
 )
 
 # Auto-refresh ONLY in live mode
@@ -52,17 +51,38 @@ def get_countries():
 @st.cache_data
 def get_indicator(code, indicator):
     url = f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json"
-    data = requests.get(url, timeout=10).json()
-    latest = next(d for d in data[1] if d["value"] is not None)
-    return latest["value"]
+    r = requests.get(url, timeout=10)
+    js = r.json()
+    if not isinstance(js, list) or len(js) < 2 or js[1] is None:
+        return None
+    for d in js[1]:
+        if d["value"] is not None:
+            return d["value"]
+    return None
 
 @st.cache_data
 def get_time_series(code, indicator):
-    url = f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json&per_page=1000"
-    data = requests.get(url, timeout=10).json()[1]
-    return sorted(
-        [(int(d["date"]), d["value"]) for d in data if d["value"] is not None]
+    url = (
+        f"https://api.worldbank.org/v2/country/"
+        f"{code}/indicator/{indicator}"
+        f"?format=json&per_page=1000"
     )
+    r = requests.get(url, timeout=10)
+    js = r.json()
+
+    # Defensive checks (THIS FIXES YOUR ERROR)
+    if not isinstance(js, list) or len(js) < 2 or js[1] is None:
+        return []
+
+    series = []
+    for d in js[1]:
+        try:
+            if d["value"] is not None:
+                series.append((int(d["date"]), d["value"]))
+        except:
+            continue
+
+    return sorted(series)
 
 # ==================================================
 # SIDEBAR CONTROLS
@@ -95,8 +115,11 @@ if mode.startswith("--"):
     values = []
     for name in selected:
         pop = get_indicator(countries[name], "SP.POP.TOTL")
-        growth = (GLOBAL_BIRTHS - GLOBAL_DEATHS) * (pop / world_pop)
-        values.append(growth / SECONDS_PER_YEAR * elapsed)
+        if pop and world_pop:
+            growth = (GLOBAL_BIRTHS - GLOBAL_DEATHS) * (pop / world_pop)
+            values.append(growth / SECONDS_PER_YEAR * elapsed)
+        else:
+            values.append(0)
 
     fig = go.Figure(
         go.Bar(
@@ -114,8 +137,7 @@ if mode.startswith("--"):
     )
 
     st.plotly_chart(fig, width="stretch")
-
-    st.caption("-- Live values are extrapolated from annual demographic rates.")
+    st.caption("Live values are extrapolated from annual demographic rates.")
 
 # ==================================================
 # ⚪ STATIC MODE — FULL ANALYSIS
@@ -137,22 +159,16 @@ else:
         code = countries[name]
         row = {"Country": name}
         for label, ind in INDICATORS.items():
-            try:
-                row[label] = get_indicator(code, ind)
-            except:
-                row[label] = None
+            row[label] = get_indicator(code, ind)
         rows.append(row)
 
     df = pd.DataFrame(rows)
 
-    # -------------------------
-    # STATIC TABS
-    # -------------------------
     tab_demo, tab_econ, tab_ineq, tab_trends, tab_map = st.tabs(
         ["Demographics", "Economy", "Inequality & Education", "Trends", "Map"]
     )
 
-    # --- Demographics ---
+    # ------------------ Demographics ------------------
     with tab_demo:
         fig = go.Figure(
             go.Bar(
@@ -164,12 +180,12 @@ else:
         )
         fig.update_layout(
             title="Population",
-            yaxis_range=[0, df["Population"].max() * 1.2],
+            yaxis_range=[0, df["Population"].max() * 1.2 if not df["Population"].isnull().all() else 1],
             showlegend=False,
         )
         st.plotly_chart(fig, width="stretch")
 
-    # --- Economy ---
+    # ------------------ Economy ------------------
     with tab_econ:
         fig = go.Figure(
             go.Bar(
@@ -181,12 +197,12 @@ else:
         )
         fig.update_layout(
             title="GDP (current USD)",
-            yaxis_range=[0, df["GDP"].max() * 1.2],
+            yaxis_range=[0, df["GDP"].max() * 1.2 if not df["GDP"].isnull().all() else 1],
             showlegend=False,
         )
         st.plotly_chart(fig, width="stretch")
 
-    # --- Inequality & Education ---
+    # ------------------ Inequality & Education ------------------
     with tab_ineq:
         col1, col2 = st.columns(2)
 
@@ -200,8 +216,8 @@ else:
                 )
             )
             fig.update_layout(
-                title="Income Inequality (Gini Index)",
-                yaxis_range=[0, df["Gini Index"].max() * 1.2],
+                title="Gini Index",
+                yaxis_range=[0, df["Gini Index"].max() * 1.2 if not df["Gini Index"].isnull().all() else 1],
                 showlegend=False,
             )
             st.plotly_chart(fig, width="stretch")
@@ -216,13 +232,13 @@ else:
                 )
             )
             fig.update_layout(
-                title="Adult Literacy Rate (%)",
+                title="Literacy Rate (%)",
                 yaxis_range=[0, 100],
                 showlegend=False,
             )
             st.plotly_chart(fig, width="stretch")
 
-    # --- Trends ---
+    # ------------------ Trends (FIXED) ------------------
     with tab_trends:
         metric = st.selectbox(
             "Indicator",
@@ -234,20 +250,26 @@ else:
         )
 
         fig = go.Figure()
+        has_data = False
+
         for name in selected:
             series = get_time_series(countries[name], metric)
+            if not series:
+                continue
+
             years = [y for y, v in series]
             values = [v for y, v in series]
+
             fig.add_trace(go.Scatter(x=years, y=values, mode="lines", name=name))
+            has_data = True
 
-        fig.update_layout(
-            title="Historical trends",
-            hovermode="x unified",
-        )
+        if has_data:
+            fig.update_layout(title="Historical Trends", hovermode="x unified")
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.warning("No historical data available for the selected countries / indicator.")
 
-        st.plotly_chart(fig, width="stretch")
-
-    # --- Map ---
+    # ------------------ Map ------------------
     with tab_map:
         map_metric = st.selectbox(
             "Map metric",
@@ -275,13 +297,13 @@ else:
         )
 
         fig.update_layout(
-            title="World map",
+            title="World Map",
             geo=dict(showframe=False, showcoastlines=True),
         )
 
         st.plotly_chart(fig, width="stretch")
 
-    # --- Download ---
+    # ------------------ Download ------------------
     st.download_button(
         "Download comparison table (CSV)",
         df.to_csv(index=False),
@@ -289,12 +311,4 @@ else:
         "text/csv",
     )
 
-    with st.expander("Methodology"):
-        st.markdown("""
-        - Data source: World Bank
-        - Live values are extrapolated estimates
-        - Static data shows latest available year
-        - GDP per capita is an income proxy
-        """)
-
-st.caption("Built with Streamlit • Data from World Bank")
+st.caption("Built with Streamlit • Data source: World Bank")
