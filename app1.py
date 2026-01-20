@@ -294,28 +294,26 @@ else:
             st.warning("No historical data available for the selected countries / indicator.")
 
     # ------------------ Map ------------------
-    with tab_map:
-      map_metric = st.selectbox(
-        "Map metric",
-        {
-            "Population": "SP.POP.TOTL",
-            "GDP": "NY.GDP.MKTP.CD",
-            "GDP per Capita": "NY.GDP.PCAP.CD",
-            "Gini Index": "SI.POV.GINI",
-        },
-    )
+    # ------------------ Map ------------------
+with tab_map:
+    MAP_INDICATORS = {
+        "Population": "SP.POP.TOTL",
+        "GDP": "NY.GDP.MKTP.CD",
+        "GDP per Capita": "NY.GDP.PCAP.CD",
+        "Gini Index": "SI.POV.GINI",
+    }
+
+    map_label = st.selectbox("Map metric", list(MAP_INDICATORS.keys()))
+    map_metric = MAP_INDICATORS[map_label]
 
     locations = []
     values = []
 
     for name, code in countries.items():
         val = get_indicator(code, map_metric)
-
-        # Keep country even if value is missing
         locations.append(code)
         values.append(val if val is not None else float("nan"))
 
-    # 🔑 Check that we have at least SOME real values
     if all(pd.isna(v) for v in values):
         st.warning("No data available for this indicator.")
     else:
@@ -325,16 +323,14 @@ else:
                 z=values,
                 locationmode="ISO-3",
                 colorscale="Viridis",
-                colorbar_title=map_metric,
+                colorbar_title=map_label,
                 marker_line_color="white",
                 marker_line_width=0.4,
-                zmin=pd.Series(values).min(skipna=True),
-                zmax=pd.Series(values).max(skipna=True),
             )
         )
 
         fig.update_layout(
-            title="World Map",
+            title=f"World Map – {map_label}",
             geo=dict(
                 scope="world",
                 showframe=False,
@@ -348,6 +344,7 @@ else:
         )
 
         st.plotly_chart(fig, width="stretch")
+
 
 
 
