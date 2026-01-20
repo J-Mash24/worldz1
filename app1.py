@@ -14,7 +14,9 @@ st.set_page_config(layout="wide")
 st.title("Global Country Comparison Dashboard")
 st.caption("Population, economy, tax structure, inequality, and education (World Bank data)")
 
-st_autorefresh(interval=5_000, key="refresh")
+if st.session_state.get("active_tab") != "Map":
+    st_autorefresh(interval=5_000, key="refresh")
+
 
 # ==================================================
 # Helpers
@@ -105,9 +107,18 @@ df.rename(columns={"index": "Country"}, inplace=True)
 # ==================================================
 # Tabs
 # ==================================================
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    [" Demographics", " Economy", " Tax", "Inequality & Education", "Map"]
-)
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "Demographics"
+
+tab_labels = ["Demographics", "Economy", "Tax", "Inequality & Education", "Map"]
+
+tabs = st.tabs(tab_labels)
+
+for label, tab in zip(tab_labels, tabs):
+    with tab:
+        if st.session_state.active_tab != label:
+            st.session_state.active_tab = label
+
 
 # =========================
 # TAB 1 — Demographics
