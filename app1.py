@@ -295,37 +295,62 @@ else:
 
     # ------------------ Map ------------------
     with tab_map:
-        map_metric = st.selectbox(
-            "Map metric",
-            {
-                "Population": "SP.POP.TOTL",
-                "GDP": "NY.GDP.MKTP.CD",
-                "GDP per Capita": "NY.GDP.PCAP.CD",
-                "Gini Index": "SI.POV.GINI",
-            },
-        )
+    map_metric = st.selectbox(
+        "Map metric",
+        {
+            "Population": "SP.POP.TOTL",
+            "GDP": "NY.GDP.MKTP.CD",
+            "GDP per Capita": "NY.GDP.PCAP.CD",
+            "Gini Index": "SI.POV.GINI",
+        },
+    )
 
-        map_values = {
-            code: get_indicator(code, map_metric)
-            for _, code in countries.items()
-        }
+    locations = []
+    values = []
 
+    for name, code in countries.items():
+        value = get_indicator(code, map_metric)
+
+        # ✅ FILTER INVALID DATA (CRITICAL)
+        if value is None:
+            continue
+        if isinstance(value, float) and pd.isna(value):
+            continue
+
+        locations.append(code)
+        values.append(value)
+
+    if not locations:
+        st.warning("No data available for this indicator.")
+    else:
         fig = go.Figure(
             go.Choropleth(
-                locations=list(map_values.keys()),
-                z=list(map_values.values()),
+                locations=locations,
+                z=values,
                 locationmode="ISO-3",
                 colorscale="Viridis",
                 colorbar_title=map_metric,
+                marker_line_color="white",
+                marker_line_width=0.4,
             )
         )
 
         fig.update_layout(
             title="World Map",
-            geo=dict(showframe=False, showcoastlines=True),
+            geo=dict(
+                scope="world",
+                showframe=False,
+                showcoastlines=True,
+                coastlinecolor="gray",
+                showland=True,
+                landcolor="rgb(240,240,240)",
+                showcountries=True,
+                countrycolor="white",
+            ),
         )
 
         st.plotly_chart(fig, width="stretch")
+
 
     # ------------------ Download ------------------
     st.download_button(
