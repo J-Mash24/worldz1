@@ -263,35 +263,48 @@ else:
             st.plotly_chart(fig, width="stretch")
 
     # ------------------ Trends (FIXED) ------------------
-    with tab_trends:
-        metric = st.selectbox(
-            "Indicator",
-            {
-                "Population": "SP.POP.TOTL",
-                "GDP": "NY.GDP.MKTP.CD",
-                "GDP per Capita": "NY.GDP.PCAP.CD",
-            },
+    # ------------------ Trends ------------------
+with tab_trends:
+    TREND_INDICATORS = {
+        "Population": "SP.POP.TOTL",
+        "GDP": "NY.GDP.MKTP.CD",
+        "GDP per Capita": "NY.GDP.PCAP.CD",
+    }
+
+    trend_label = st.selectbox("Indicator", list(TREND_INDICATORS.keys()))
+    trend_metric = TREND_INDICATORS[trend_label]
+
+    fig = go.Figure()
+    has_data = False
+
+    for name in selected:
+        series = get_time_series(countries[name], trend_metric)
+
+        if len(series) < 2:
+            continue
+
+        years = [y for y, v in series]
+        values = [v for y, v in series]
+
+        fig.add_trace(
+            go.Scatter(
+                x=years,
+                y=values,
+                mode="lines",
+                name=name,
+            )
         )
+        has_data = True
 
-        fig = go.Figure()
-        has_data = False
+    if has_data:
+        fig.update_layout(
+            title=f"Historical Trends – {trend_label}",
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig, width="stretch")
+    else:
+        st.warning("No historical data available for the selected countries.")
 
-        for name in selected:
-            series = get_time_series(countries[name], metric)
-            if not series:
-                continue
-
-            years = [y for y, v in series]
-            values = [v for y, v in series]
-
-            fig.add_trace(go.Scatter(x=years, y=values, mode="lines", name=name))
-            has_data = True
-
-        if has_data:
-            fig.update_layout(title="Historical Trends", hovermode="x unified")
-            st.plotly_chart(fig, width="stretch")
-        else:
-            st.warning("No historical data available for the selected countries / indicator.")
 
     # ------------------ Map ------------------
     # ------------------ Map ------------------
