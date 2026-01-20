@@ -5,15 +5,15 @@ from datetime import datetime
 import plotly.graph_objects as go
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+import pandas as pd
 
 # ==================================================
 # Page setup
 # ==================================================
 st.set_page_config(layout="wide")
-st.title("Live Population Metrics (Estimated)")
-st.caption("Based on World Bank data with interpolated demographic rates")
+st.title("Global Country Comparison Dashboard")
+st.caption("Population, economy, tax structure, inequality, and education (World Bank data)")
 
-# Auto refresh every 5 seconds (cloud-safe)
 st_autorefresh(interval=5_000, key="refresh")
 
 # ==================================================
@@ -36,33 +36,20 @@ def format_compact(n):
 def get_countries():
     url = "https://api.worldbank.org/v2/country?format=json&per_page=400"
     data = requests.get(url, timeout=10).json()[1]
-    countries = {
-        c["name"]: c["id"]
-        for c in data
-        if c["region"]["id"] != "NA"
-    }
+    countries = {c["name"]: c["id"] for c in data if c["region"]["id"] != "NA"}
     countries["World"] = "WLD"
     return dict(sorted(countries.items()))
 
 @st.cache_data
-def get_indicator(country_code, indicator):
-    url = (
-        f"https://api.worldbank.org/v2/country/"
-        f"{country_code}/indicator/{indicator}?format=json"
-    )
+def get_indicator(code, indicator):
+    url = f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json"
     data = requests.get(url, timeout=10).json()
     latest = next(d for d in data[1] if d["value"] is not None)
     return latest["value"]
 
 @st.cache_data
 def get_all_populations(countries_dict):
-    return {
-        name: get_indicator(code, "SP.POP.TOTL")
-        for name, code in countries_dict.items()
-    }
-
-def scale_rate(global_rate, country_pop, world_pop):
-    return global_rate * (country_pop / world_pop)
+    return {name: get_indicator(code, "SP.POP.TOTL") for name, code in countries_dict.items()}
 
 # ==================================================
 # Sidebar controls
@@ -80,7 +67,7 @@ selected_names = st.sidebar.multiselect(
 
 map_metric = st.sidebar.selectbox(
     "Map metric",
-    ["Population", "Births This Year", "Deaths This Year", "Growth This Year"],
+    ["Population", "GDP", "GDP per Capita", "Gini Index"],
 )
 
 # ==================================================
@@ -89,145 +76,162 @@ map_metric = st.sidebar.selectbox(
 all_pops = get_all_populations(countries)
 world_pop = all_pops["World"]
 
-# Global demographic constants
-GLOBAL_BIRTHS = 140_000_000
-GLOBAL_DEATHS = 60_000_000
-SECONDS_PER_YEAR = 365 * 24 * 3600
+# Economic indicators
+INDICATORS = {
+    "GDP": "NY.GDP.MKTP.CD",
+    "GDP per Capita": "NY.GDP.PCAP.CD",
+    "Tax % GDP": "GC.TAX.TOTL.GD.ZS",
+    "Gini Index": "SI.POV.GINI",
+    "Education Spending % GDP": "SE.XPD.TOTL.GD.ZS",
+    "Literacy Rate %": "SE.ADT.LITR.ZS",
+}
 
-# Session timing
-if "start_time" not in st.session_state:
-    st.session_state.start_time = time.time()
-
-if "year_seconds" not in st.session_state:
-    start_of_year = datetime(datetime.now().year, 1, 1)
-    st.session_state.year_seconds = (datetime.now() - start_of_year).total_seconds()
-
-elapsed = time.time() - st.session_state.start_time
-
-# ==================================================
-# Compute metrics
-# ==================================================
-today_data = {"Births Today": [], "Deaths Today": [], "Growth Today": []}
-year_data = {"Births This Year": [], "Deaths This Year": [], "Growth This Year": []}
+data = {}
 
 for name in selected_names:
-    pop = all_pops.get(name)
-    if pop is None or world_pop == 0:
-        continue
+    code = countries[name]
+    data[name] = {
+        "Population": all_pops.get(name),
+    }
+    for label, ind in INDICATORS.items():
+        try:
+            data[name][label] = get_indicator(code, ind)
+        except:
+            data[name][label] = None
 
-    births_year = scale_rate(GLOBAL_BIRTHS, pop, world_pop)
-    deaths_year = scale_rate(GLOBAL_DEATHS, pop, world_pop)
-    growth_year = births_year - deaths_year
-
-    births_ps = births_year / SECONDS_PER_YEAR
-    deaths_ps = deaths_year / SECONDS_PER_YEAR
-    growth_ps = growth_year / SECONDS_PER_YEAR
-
-    today_data["Births Today"].append(births_ps * elapsed)
-    today_data["Deaths Today"].append(deaths_ps * elapsed)
-    today_data["Growth Today"].append(growth_ps * elapsed)
-
-    year_data["Births This Year"].append(
-        births_ps * st.session_state.year_seconds + births_ps * elapsed
-    )
-    year_data["Deaths This Year"].append(
-        deaths_ps * st.session_state.year_seconds + deaths_ps * elapsed
-    )
-    year_data["Growth This Year"].append(
-        growth_ps * st.session_state.year_seconds + growth_ps * elapsed
-    )
-
-# ==================================================
-# Smooth Y-axis scaling
-# ==================================================
-def smooth_max(key, current):
-    prev = st.session_state.get(key, 0)
-    st.session_state[key] = max(prev, current)
-    return st.session_state[key]
-
-max_today = smooth_max(
-    "max_today", max(max(v) for v in today_data.values())
-)
-max_year = smooth_max(
-    "max_year", max(max(v) for v in year_data.values())
-)
+df = pd.DataFrame.from_dict(data, orient="index").reset_index()
+df.rename(columns={"index": "Country"}, inplace=True)
 
 # ==================================================
 # Tabs
 # ==================================================
-tab1, tab2 = st.tabs(["Demographics", "Map"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [" Demographics", " Economy", " Tax", "Inequality & Education", "Map"]
+)
 
 # =========================
-# TAB 1 — Charts
+# TAB 1 — Demographics
 # =========================
 with tab1:
+    fig_pop = go.Figure(
+        go.Bar(
+            x=df["Country"],
+            y=df["Population"],
+            text=[format_compact(v) for v in df["Population"]],
+            textposition="outside",
+        )
+    )
+    fig_pop.update_layout(
+        title="Population",
+        yaxis_range=[0, df["Population"].max() * 1.2],
+        showlegend=False,
+    )
+    st.plotly_chart(fig_pop, width="stretch")
+
+# =========================
+# TAB 2 — Economy
+# =========================
+with tab2:
     col1, col2 = st.columns(2)
 
     with col1:
-        fig_today = go.Figure()
-        for metric, values in today_data.items():
-            fig_today.add_bar(
-                name=metric,
-                x=selected_names,
-                y=values,
-                text=[format_compact(v) for v in values],
+        fig_gdp = go.Figure(
+            go.Bar(
+                x=df["Country"],
+                y=df["GDP"],
+                text=[format_compact(v) for v in df["GDP"]],
                 textposition="outside",
             )
-
-        fig_today.update_layout(
-            title="Today (Live Estimated)",
-            barmode="group",
-            yaxis_title="People",
-            yaxis_range=[0, max_today * 1.25],
-            uniformtext_minsize=10,
-            uniformtext_mode="hide",
         )
-        st.plotly_chart(fig_today, width="stretch")
+        fig_gdp.update_layout(
+            title="GDP (current USD)",
+            yaxis_range=[0, df["GDP"].max() * 1.2],
+            showlegend=False,
+        )
+        st.plotly_chart(fig_gdp, width="stretch")
 
     with col2:
-        fig_year = go.Figure()
-        for metric, values in year_data.items():
-            fig_year.add_bar(
-                name=metric,
-                x=selected_names,
-                y=values,
-                text=[format_compact(v) for v in values],
+        fig_gdppc = go.Figure(
+            go.Bar(
+                x=df["Country"],
+                y=df["GDP per Capita"],
+                text=[format_compact(v) for v in df["GDP per Capita"]],
                 textposition="outside",
             )
-
-        fig_year.update_layout(
-            title="This Year (Live Estimated)",
-            barmode="group",
-            yaxis_title="People",
-            yaxis_range=[0, max_year * 1.15],
-            uniformtext_minsize=10,
-            uniformtext_mode="hide",
         )
-        st.plotly_chart(fig_year, width="stretch")
+        fig_gdppc.update_layout(
+            title="Income Proxy (GDP per Capita)",
+            yaxis_range=[0, df["GDP per Capita"].max() * 1.2],
+            showlegend=False,
+        )
+        st.plotly_chart(fig_gdppc, width="stretch")
 
 # =========================
-# TAB 2 — Map
+# TAB 3 — Tax
 # =========================
-with tab2:
-    map_values = {}
+with tab3:
+    fig_tax = go.Figure(
+        go.Bar(
+            x=df["Country"],
+            y=df["Tax % GDP"],
+            text=[f"{v:.1f}%" if v else "N/A" for v in df["Tax % GDP"]],
+            textposition="outside",
+        )
+    )
+    fig_tax.update_layout(
+        title="Total Tax Revenue (% of GDP)",
+        yaxis_range=[0, df["Tax % GDP"].max() * 1.3],
+        showlegend=False,
+    )
+    st.plotly_chart(fig_tax, width="stretch")
 
-    for name, code in countries.items():
-        pop = all_pops.get(name)
-        if pop is None:
-            continue
+# =========================
+# TAB 4 — Inequality & Education
+# =========================
+with tab4:
+    col1, col2 = st.columns(2)
 
-        births_year = scale_rate(GLOBAL_BIRTHS, pop, world_pop)
-        deaths_year = scale_rate(GLOBAL_DEATHS, pop, world_pop)
-        growth_year = births_year - deaths_year
+    with col1:
+        fig_gini = go.Figure(
+            go.Bar(
+                x=df["Country"],
+                y=df["Gini Index"],
+                text=[f"{v:.1f}" if v else "N/A" for v in df["Gini Index"]],
+                textposition="outside",
+            )
+        )
+        fig_gini.update_layout(
+            title="Income Inequality (Gini Index)",
+            yaxis_range=[0, df["Gini Index"].max() * 1.2],
+            showlegend=False,
+        )
+        st.plotly_chart(fig_gini, width="stretch")
 
-        if map_metric == "Population":
-            map_values[code] = pop
-        elif map_metric == "Births This Year":
-            map_values[code] = births_year
-        elif map_metric == "Deaths This Year":
-            map_values[code] = deaths_year
-        elif map_metric == "Growth This Year":
-            map_values[code] = growth_year
+    with col2:
+        fig_edu = go.Figure(
+            go.Bar(
+                x=df["Country"],
+                y=df["Literacy Rate %"],
+                text=[f"{v:.1f}%" if v else "N/A" for v in df["Literacy Rate %"]],
+                textposition="outside",
+            )
+        )
+        fig_edu.update_layout(
+            title="Adult Literacy Rate (%)",
+            yaxis_range=[0, 100],
+            showlegend=False,
+        )
+        st.plotly_chart(fig_edu, width="stretch")
+
+# =========================
+# TAB 5 — Map
+# =========================
+with tab5:
+    map_values = {
+        countries[row["Country"]]: row[map_metric]
+        for _, row in df.iterrows()
+        if row[map_metric] is not None
+    }
 
     fig_map = go.Figure(
         go.Choropleth(
@@ -238,7 +242,6 @@ with tab2:
             colorbar_title=map_metric,
         )
     )
-
     fig_map.update_layout(
         title=f"World Map – {map_metric}",
         geo=dict(showframe=False, showcoastlines=False),
@@ -246,17 +249,26 @@ with tab2:
 
     st.plotly_chart(fig_map, width="stretch")
 
+# =========================
+# Download
+# =========================
+st.download_button(
+    "Download comparison table (CSV)",
+    df.to_csv(index=False),
+    file_name="country_comparison.csv",
+    mime="text/csv",
+)
+
 # ==================================================
 # Footer
 # ==================================================
-with st.expander("Methodology"):
+with st.expander("Methodology & Notes"):
     st.markdown("""
-    - Population data: World Bank  
-    - Births & deaths are estimated using global annual rates  
-    - Values update continuously and are **not census counts**  
-    - Map values reflect latest available yearly data  
+    - Data source: World Bank (latest available year)
+    - GDP per capita is used as an income proxy
+    - Tax values represent total government tax revenue (% of GDP)
+    - Gini index measures income inequality (higher = more unequal)
+    - Education metrics may be missing for some countries
     """)
 
-st.caption(
-    "All values are estimates. GDP per capita is used as an income proxy where applicable."
-)
+st.caption("This dashboard shows official and estimated indicators. Interpret values accordingly.")
