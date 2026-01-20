@@ -1,5 +1,3 @@
-# PASTE YOUR FULL STREAMLIT APP CODE HERE
-
 
 import time
 import requests
@@ -8,19 +6,32 @@ import plotly.graph_objects as go
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
-# --------------------------------------------------
+# ==================================================
 # Page setup
-# --------------------------------------------------
+# ==================================================
 st.set_page_config(layout="wide")
 st.title("Live Population Metrics (Estimated)")
 st.caption("Based on World Bank data with interpolated demographic rates")
 
-# auto refresh every 5 seconds
+# Auto refresh every 5 seconds (cloud-safe)
 st_autorefresh(interval=5_000, key="refresh")
 
-# --------------------------------------------------
-# Data helpers
-# --------------------------------------------------
+# ==================================================
+# Helpers
+# ==================================================
+def format_compact(n):
+    if n is None:
+        return "N/A"
+    if n >= 1e12:
+        return f"{n/1e12:.1f}T"
+    elif n >= 1e9:
+        return f"{n/1e9:.1f}B"
+    elif n >= 1e6:
+        return f"{n/1e6:.1f}M"
+    elif n >= 1e3:
+        return f"{n/1e3:.1f}K"
+    return str(int(n))
+
 @st.cache_data
 def get_countries():
     url = "https://api.worldbank.org/v2/country?format=json&per_page=400"
@@ -34,47 +45,56 @@ def get_countries():
     return dict(sorted(countries.items()))
 
 @st.cache_data
-def get_latest_population(country_code):
-    url = f"https://api.worldbank.org/v2/country/{country_code}/indicator/SP.POP.TOTL?format=json"
+def get_indicator(country_code, indicator):
+    url = (
+        f"https://api.worldbank.org/v2/country/"
+        f"{country_code}/indicator/{indicator}?format=json"
+    )
     data = requests.get(url, timeout=10).json()
     latest = next(d for d in data[1] if d["value"] is not None)
     return latest["value"]
 
+@st.cache_data
+def get_all_populations(countries_dict):
+    return {
+        name: get_indicator(code, "SP.POP.TOTL")
+        for name, code in countries_dict.items()
+    }
+
 def scale_rate(global_rate, country_pop, world_pop):
     return global_rate * (country_pop / world_pop)
 
-# --------------------------------------------------
-# Country selection
-# --------------------------------------------------
+# ==================================================
+# Sidebar controls
+# ==================================================
+st.sidebar.header("Controls")
+
 countries = get_countries()
 
-selected_names = st.multiselect(
-    "Select countries to compare",
+selected_names = st.sidebar.multiselect(
+    "Select countries",
     list(countries.keys()),
     default=["World", "United States", "India", "China"],
     max_selections=5,
 )
 
-# --------------------------------------------------
-# Baseline population
-# --------------------------------------------------
-world_pop = get_latest_population("WLD")
+map_metric = st.sidebar.selectbox(
+    "Map metric",
+    ["Population", "Births This Year", "Deaths This Year", "Growth This Year"],
+)
 
-country_pops = {
-    name: get_latest_population(countries[name])
-    for name in selected_names
-}
+# ==================================================
+# Data preparation
+# ==================================================
+all_pops = get_all_populations(countries)
+world_pop = all_pops["World"]
 
-# --------------------------------------------------
-# Global demographic estimates
-# --------------------------------------------------
+# Global demographic constants
 GLOBAL_BIRTHS = 140_000_000
 GLOBAL_DEATHS = 60_000_000
 SECONDS_PER_YEAR = 365 * 24 * 3600
 
-# --------------------------------------------------
-# Session timing (persists across reruns)
-# --------------------------------------------------
+# Session timing
 if "start_time" not in st.session_state:
     st.session_state.start_time = time.time()
 
@@ -84,23 +104,16 @@ if "year_seconds" not in st.session_state:
 
 elapsed = time.time() - st.session_state.start_time
 
-# --------------------------------------------------
-# Compute metrics per country
-# --------------------------------------------------
-today_data = {
-    "Births Today": [],
-    "Deaths Today": [],
-    "Growth Today": [],
-}
-
-year_data = {
-    "Births This Year": [],
-    "Deaths This Year": [],
-    "Growth This Year": [],
-}
+# ==================================================
+# Compute metrics
+# ==================================================
+today_data = {"Births Today": [], "Deaths Today": [], "Growth Today": []}
+year_data = {"Births This Year": [], "Deaths This Year": [], "Growth This Year": []}
 
 for name in selected_names:
-    pop = country_pops[name]
+    pop = all_pops.get(name)
+    if pop is None or world_pop == 0:
+        continue
 
     births_year = scale_rate(GLOBAL_BIRTHS, pop, world_pop)
     deaths_year = scale_rate(GLOBAL_DEATHS, pop, world_pop)
@@ -124,34 +137,40 @@ for name in selected_names:
         growth_ps * st.session_state.year_seconds + growth_ps * elapsed
     )
 
-# --------------------------------------------------
-# Auto-scaling Y-axis values
-# --------------------------------------------------
-max_today = max(max(values) for values in today_data.values())
-max_year = max(max(values) for values in year_data.values())
+# ==================================================
+# Smooth Y-axis scaling
+# ==================================================
+def smooth_max(key, current):
+    prev = st.session_state.get(key, 0)
+    st.session_state[key] = max(prev, current)
+    return st.session_state[key]
 
-# --------------------------------------------------
-# Charts
-# --------------------------------------------------
-tab1, tab2 = st.tabs(["Charts", "Map"])
+max_today = smooth_max(
+    "max_today", max(max(v) for v in today_data.values())
+)
+max_year = smooth_max(
+    "max_year", max(max(v) for v in year_data.values())
+)
 
-# =======================
+# ==================================================
+# Tabs
+# ==================================================
+tab1, tab2 = st.tabs(["Demographics", "Map"])
+
+# =========================
 # TAB 1 — Charts
-# =======================
+# =========================
 with tab1:
     col1, col2 = st.columns(2)
 
-    # ---- TODAY ----
     with col1:
         fig_today = go.Figure()
-
-        for metric in today_data:
-            values = today_data[metric]
+        for metric, values in today_data.items():
             fig_today.add_bar(
                 name=metric,
                 x=selected_names,
                 y=values,
-                text=[f"{int(v):,}" for v in values],
+                text=[format_compact(v) for v in values],
                 textposition="outside",
             )
 
@@ -163,20 +182,16 @@ with tab1:
             uniformtext_minsize=10,
             uniformtext_mode="hide",
         )
-
         st.plotly_chart(fig_today, width="stretch")
 
-    # ---- THIS YEAR ----
     with col2:
         fig_year = go.Figure()
-
-        for metric in year_data:
-            values = year_data[metric]
+        for metric, values in year_data.items():
             fig_year.add_bar(
                 name=metric,
                 x=selected_names,
                 y=values,
-                text=[f"{int(v):,}" for v in values],
+                text=[format_compact(v) for v in values],
                 textposition="outside",
             )
 
@@ -188,22 +203,18 @@ with tab1:
             uniformtext_minsize=10,
             uniformtext_mode="hide",
         )
-
         st.plotly_chart(fig_year, width="stretch")
 
-# =======================
+# =========================
 # TAB 2 — Map
-# =======================
+# =========================
 with tab2:
-    map_metric = st.selectbox(
-        "Map metric",
-        ["Population", "Births This Year", "Deaths This Year", "Growth This Year"],
-    )
-
     map_values = {}
 
     for name, code in countries.items():
-        pop = get_latest_population(code)
+        pop = all_pops.get(name)
+        if pop is None:
+            continue
 
         births_year = scale_rate(GLOBAL_BIRTHS, pop, world_pop)
         deaths_year = scale_rate(GLOBAL_DEATHS, pop, world_pop)
@@ -230,19 +241,22 @@ with tab2:
 
     fig_map.update_layout(
         title=f"World Map – {map_metric}",
-        geo=dict(
-            showframe=False,
-            showcoastlines=False,
-            projection_type="natural earth",
-        ),
+        geo=dict(showframe=False, showcoastlines=False),
     )
 
     st.plotly_chart(fig_map, width="stretch")
 
-# --------------------------------------------------
+# ==================================================
 # Footer
-# --------------------------------------------------
+# ==================================================
+with st.expander("Methodology"):
+    st.markdown("""
+    - Population data: World Bank  
+    - Births & deaths are estimated using global annual rates  
+    - Values update continuously and are **not census counts**  
+    - Map values reflect latest available yearly data  
+    """)
+
 st.caption(
-    "Values are estimates derived from World Bank population data and global demographic rates. "
-    "They are not real-time census counts."
+    "All values are estimates. GDP per capita is used as an income proxy where applicable."
 )
