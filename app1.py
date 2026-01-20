@@ -295,7 +295,7 @@ else:
 
     # ------------------ Map ------------------
     with tab_map:
-    map_metric = st.selectbox(
+        map_metric = st.selectbox(
         "Map metric",
         {
             "Population": "SP.POP.TOTL",
