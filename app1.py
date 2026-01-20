@@ -1,6 +1,5 @@
 
 import time
-import math
 import requests
 import plotly.graph_objects as go
 import streamlit as st
@@ -14,37 +13,43 @@ st.set_page_config(layout="wide")
 st.title("Global Country Comparison Dashboard")
 
 # ==================================================
+# MODE SWITCH
+# ==================================================
+mode = st.sidebar.radio(
+    "Dashboard mode",
+    ["-- Live (Demographics)", "- Static (Full Analysis)"]
+)
+
+# Auto-refresh ONLY in live mode
+if mode.startswith("--"):
+    st_autorefresh(interval=5_000, key="refresh")
+
+# ==================================================
 # HELPERS
 # ==================================================
+import math
+
 def format_compact(n):
-    if n is None or (isinstance(n, float) and math.isnan(n)):
+    if n is None:
         return "N/A"
-    if n >= 1e12:
-        return f"{n/1e12:.1f}T"
-    if n >= 1e9:
-        return f"{n/1e9:.1f}B"
-    if n >= 1e6:
-        return f"{n/1e6:.1f}M"
-    if n >= 1e3:
-        return f"{n/1e3:.1f}K"
-    return f"{int(n):,}"
 
-def index_series(series):
-    if len(series) < 2:
-        return []
-    base_val = series[0][1]
-    if base_val in (None, 0):
-        return []
-    return [(y, v / base_val * 100) for y, v in series]
+    # Handle NaN (THIS FIXES THE ERROR)
+    if isinstance(n, float) and math.isnan(n):
+        return "N/A"
 
-def growth_badge(val):
-    if val is None:
-        return "No data"
-    if val > 1.5:
-        return "Fast growth"
-    if val > 0.5:
-        return "🟡 Moderate growth"
-    return "Slow / shrinking"
+    try:
+        if n >= 1e12:
+            return f"{n/1e12:.1f}T"
+        elif n >= 1e9:
+            return f"{n/1e9:.1f}B"
+        elif n >= 1e6:
+            return f"{n/1e6:.1f}M"
+        elif n >= 1e3:
+            return f"{n/1e3:.1f}K"
+        return f"{int(n):,}"
+    except Exception:
+        return "N/A"
+
 
 @st.cache_data
 def get_countries():
@@ -56,13 +61,17 @@ def get_countries():
 
 @st.cache_data
 def get_indicator(code, indicator):
+    url = f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json"
     try:
-        r = requests.get(
-            f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json",
-            timeout=10,
-        )
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+    except requests.RequestException:
+        return None
+
+    try:
         js = r.json()
-    except Exception:
+    except ValueError:
+        # Not JSON (HTML / empty / error page)
         return None
 
     if not isinstance(js, list) or len(js) < 2 or js[1] is None:
@@ -71,73 +80,48 @@ def get_indicator(code, indicator):
     for d in js[1]:
         if d.get("value") is not None:
             return d["value"]
+
     return None
+
 
 @st.cache_data
 def get_time_series(code, indicator):
-    try:
-        r = requests.get(
-            f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}"
-            f"?format=json&per_page=1000&page=1",
-            timeout=10,
-        )
-        js = r.json()
-    except Exception:
-        return []
+    url = (
+        f"https://api.worldbank.org/v2/country/"
+        f"{code}/indicator/{indicator}"
+        f"?format=json&per_page=1000"
+    )
+    r = requests.get(url, timeout=10)
+    js = r.json()
 
+    # Defensive checks (THIS FIXES YOUR ERROR)
     if not isinstance(js, list) or len(js) < 2 or js[1] is None:
         return []
 
     series = []
     for d in js[1]:
-        if d.get("value") is not None:
-            series.append((int(d["date"]), d["value"]))
+        try:
+            if d["value"] is not None:
+                series.append((int(d["date"]), d["value"]))
+        except:
+            continue
+
     return sorted(series)
 
 # ==================================================
-# SIDEBAR (ALWAYS VISIBLE)
+# SIDEBAR CONTROLS
 # ==================================================
-st.sidebar.header("Controls")
-
-mode = st.sidebar.radio(
-    "Dashboard mode",
-    ["-- Live (Demographics)", "- Static (Insights & Trends)"]
-)
-
-if mode.startswith("--"):
-    st_autorefresh(interval=5_000, key="refresh")
-
 countries = get_countries()
-
-STORIES = {
-    "None": None,
-    "Rise of Asia": {
-        "countries": ["China", "India", "Japan", "South Korea"],
-        "indicator": "NY.GDP.PCAP.CD",
-        "indexed": True,
-    },
-    "Aging societies": {
-        "countries": ["Japan", "Italy", "Germany", "South Korea"],
-        "indicator": "SP.POP.TOTL",
-        "indexed": True,
-    },
-}
-
-story = st.sidebar.selectbox("📘 Story preset", list(STORIES.keys()))
 
 selected = st.sidebar.multiselect(
     "Select countries",
     list(countries.keys()),
-    ["World", "United States", "China"],
+    ["World", "United States", "India"],
     max_selections=5,
-    disabled=(story != "None"),
 )
 
-if story != "None":
-    selected = STORIES[story]["countries"]
-
 # ==================================================
-# 🔴 LIVE MODE
+# 🔴 LIVE MODE — DEMOGRAPHICS ONLY
 # ==================================================
 if mode.startswith("--"):
     st.subheader("-- Live Population Growth (Estimated)")
@@ -161,12 +145,14 @@ if mode.startswith("--"):
         else:
             values.append(0)
 
-    fig = go.Figure(go.Bar(
-        x=selected,
-        y=values,
-        text=[format_compact(v) for v in values],
-        textposition="outside",
-    ))
+    fig = go.Figure(
+        go.Bar(
+            x=selected,
+            y=values,
+            text=[format_compact(v) for v in values],
+            textposition="outside",
+        )
+    )
 
     fig.update_layout(
         title="Estimated population increase since page load",
@@ -178,135 +164,237 @@ if mode.startswith("--"):
     st.caption("Live values are extrapolated from annual demographic rates.")
 
 # ==================================================
-# ⚪ STATIC MODE
+# ⚪ STATIC MODE — FULL ANALYSIS
 # ==================================================
 else:
+    st.subheader("- Static Country Analysis")
+
     INDICATORS = {
         "Population": "SP.POP.TOTL",
+        "GDP": "NY.GDP.MKTP.CD",
         "GDP per Capita": "NY.GDP.PCAP.CD",
+        "Tax % GDP": "GC.TAX.TOTL.GD.ZS",
         "Gini Index": "SI.POV.GINI",
+        "Literacy Rate %": "SE.ADT.LITR.ZS",
     }
 
     rows = []
     for name in selected:
+        code = countries[name]
         row = {"Country": name}
         for label, ind in INDICATORS.items():
-            row[label] = get_indicator(countries[name], ind)
+            row[label] = get_indicator(code, ind)
         rows.append(row)
 
     df = pd.DataFrame(rows)
 
-    tab_insight, tab_trends, tab_map = st.tabs(
-        ["Insights", "Trends", "Map"]
+    tab_demo, tab_econ, tab_ineq, tab_trends, tab_map = st.tabs(
+        ["Demographics", "Economy", "Inequality & Education", "Trends", "Map"]
     )
 
-    # ---------- INSIGHTS ----------
-    with tab_insight:
-        for _, row in df.iterrows():
-            st.markdown(f"""
-### {row['Country']}
-- Population: **{format_compact(row['Population'])}**
-- GDP per capita: **{format_compact(row['GDP per Capita'])} USD**
-- Inequality (Gini): **{row['Gini Index'] if row['Gini Index'] else 'N/A'}**
-- Growth signal: **{growth_badge(row['GDP per Capita'] / 10000 if row['GDP per Capita'] else None)}**
-
-[History](https://en.wikipedia.org/wiki/History_of_{row['Country'].replace(' ', '_')})
-            """)
-
-    # ---------- TRENDS ----------
-    with tab_trends:
-        TREND_INDICATORS = {
-            "Population": "SP.POP.TOTL",
-            "GDP per Capita": "NY.GDP.PCAP.CD",
-        }
-
-        trend_label = st.selectbox("Indicator", list(TREND_INDICATORS.keys()))
-        trend_metric = TREND_INDICATORS[trend_label]
-
-        indexed = st.checkbox(
-            "Index values (100 = first year)",
-            value=(story != "None")
+    # ------------------ Demographics ------------------
+    with tab_demo:
+        fig = go.Figure(
+            go.Bar(
+                x=df["Country"],
+                y=df["Population"],
+                text=[format_compact(v) for v in df["Population"]],
+                textposition="outside",
+            )
         )
+        fig.update_layout(
+            title="Population",
+            yaxis_range=[0, df["Population"].max() * 1.2 if not df["Population"].isnull().all() else 1],
+            showlegend=False,
+        )
+        st.plotly_chart(fig, width="stretch")
 
-        fig = go.Figure()
-        has_data = False
+    # ------------------ Economy ------------------
+    with tab_econ:
+        fig = go.Figure(
+            go.Bar(
+                x=df["Country"],
+                y=df["GDP"],
+                text=[format_compact(v) for v in df["GDP"]],
+                textposition="outside",
+            )
+        )
+        fig.update_layout(
+            title="GDP (current USD)",
+            yaxis_range=[0, df["GDP"].max() * 1.2 if not df["GDP"].isnull().all() else 1],
+            showlegend=False,
+        )
+        st.plotly_chart(fig, width="stretch")
 
-        for name in selected:
-            series = get_time_series(countries[name], trend_metric)
-            if indexed:
-                series = index_series(series)
-            if len(series) < 2:
-                continue
+    # ------------------ Inequality & Education ------------------
+    with tab_ineq:
+        col1, col2 = st.columns(2)
 
-            fig.add_trace(go.Scatter(
-                x=[y for y, _ in series],
-                y=[v for _, v in series],
-                mode="lines",
-                name=name,
-            ))
-            has_data = True
-
-        if has_data:
+        with col1:
+            fig = go.Figure(
+                go.Bar(
+                    x=df["Country"],
+                    y=df["Gini Index"],
+                    text=[f"{v:.1f}" if v else "N/A" for v in df["Gini Index"]],
+                    textposition="outside",
+                )
+            )
             fig.update_layout(
-                title=f"{trend_label} – Historical trend",
-                yaxis_title="Index (100 = base)" if indexed else trend_label,
-                hovermode="x unified",
+                title="Gini Index",
+                yaxis_range=[0, df["Gini Index"].max() * 1.2 if not df["Gini Index"].isnull().all() else 1],
+                showlegend=False,
             )
             st.plotly_chart(fig, width="stretch")
-        else:
-            st.warning("No historical data available.")
 
-    # ---------- MAP ----------
-    with tab_map:
-        MAP_INDICATORS = {
-            "Population": "SP.POP.TOTL",
-            "GDP per Capita": "NY.GDP.PCAP.CD",
-        }
+        with col2:
+            fig = go.Figure(
+                go.Bar(
+                    x=df["Country"],
+                    y=df["Literacy Rate %"],
+                    text=[f"{v:.1f}%" if v else "N/A" for v in df["Literacy Rate %"]],
+                    textposition="outside",
+                )
+            )
+            fig.update_layout(
+                title="Literacy Rate (%)",
+                yaxis_range=[0, 100],
+                showlegend=False,
+            )
+            st.plotly_chart(fig, width="stretch")
 
-        map_label = st.selectbox("Map metric", list(MAP_INDICATORS.keys()))
-        map_metric = MAP_INDICATORS[map_label]
+    # ------------------ Trends (FIXED) ------------------
+    # ------------------ Trends ------------------
+with tab_trends:
+    TREND_INDICATORS = {
+        "Population": "SP.POP.TOTL",
+        "GDP": "NY.GDP.MKTP.CD",
+        "GDP per Capita": "NY.GDP.PCAP.CD",
+    }
 
-        locations, values = [], []
-        for name, code in countries.items():
-            val = get_indicator(code, map_metric)
-            locations.append(code)
-            values.append(val if val is not None else float("nan"))
+    trend_label = st.selectbox("Indicator", list(TREND_INDICATORS.keys()))
+    trend_metric = TREND_INDICATORS[trend_label]
 
-        selected_codes = [countries[c] for c in selected]
+    fig = go.Figure()
+    has_data = False
 
+    for name in selected:
+        series = get_time_series(countries[name], trend_metric)
+
+        if len(series) < 2:
+            continue
+
+        years = [y for y, v in series]
+        values = [v for y, v in series]
+
+        fig.add_trace(
+            go.Scatter(
+                x=years,
+                y=values,
+                mode="lines",
+                name=name,
+            )
+        )
+        has_data = True
+
+    if has_data:
+        fig.update_layout(
+            title=f"Historical Trends – {trend_label}",
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig, width="stretch")
+    else:
+        st.warning("No historical data available for the selected countries.")
+
+
+    # ------------------ Map ------------------
+    # ------------------ Map ------------------
+# ------------------ Map ------------------
+with tab_map:
+    MAP_INDICATORS = {
+        "Population": "SP.POP.TOTL",
+        "GDP": "NY.GDP.MKTP.CD",
+        "GDP per Capita": "NY.GDP.PCAP.CD",
+        "Gini Index": "SI.POV.GINI",
+    }
+
+    map_label = st.selectbox("Map metric", list(MAP_INDICATORS.keys()))
+    map_metric = MAP_INDICATORS[map_label]
+
+    locations = []
+    values = []
+
+    for name, code in countries.items():
+        val = get_indicator(code, map_metric)
+        locations.append(code)
+        values.append(val if val is not None else float("nan"))
+
+    selected_codes = [countries[name] for name in selected]
+
+    if all(pd.isna(v) for v in values):
+        st.warning("No data available for this indicator.")
+    else:
         fig = go.Figure()
 
-        fig.add_trace(go.Choropleth(
-            locations=locations,
-            z=values,
-            locationmode="ISO-3",
-            colorscale="Viridis",
-            colorbar_title=map_label,
-            marker_line_color="white",
-            marker_line_width=0.4,
-        ))
+        # --- Base map (all countries) ---
+        fig.add_trace(
+            go.Choropleth(
+                locations=locations,
+                z=values,
+                locationmode="ISO-3",
+                colorscale="Viridis",
+                colorbar_title=map_label,
+                marker_line_color="white",
+                marker_line_width=0.4,
+                showscale=True,
+            )
+        )
 
-        fig.add_trace(go.Choropleth(
-            locations=[c for c in locations if c in selected_codes],
-            z=[v for c, v in zip(locations, values) if c in selected_codes],
-            locationmode="ISO-3",
-            colorscale="Viridis",
-            marker_line_color="black",
-            marker_line_width=2.5,
-            showscale=False,
-        ))
+        # --- Highlight selected countries ---
+        highlight_locs = []
+        highlight_vals = []
+
+        for code, val in zip(locations, values):
+            if code in selected_codes:
+                highlight_locs.append(code)
+                highlight_vals.append(val)
+
+        fig.add_trace(
+            go.Choropleth(
+                locations=highlight_locs,
+                z=highlight_vals,
+                locationmode="ISO-3",
+                colorscale="Viridis",
+                marker_line_color="black",
+                marker_line_width=2.5,  # 👈 highlight thickness
+                showscale=False,
+            )
+        )
 
         fig.update_layout(
             title=f"World Map – {map_label}",
             geo=dict(
+                scope="world",
                 showframe=False,
                 showcoastlines=True,
+                coastlinecolor="gray",
                 showcountries=True,
+                countrycolor="white",
                 showland=True,
                 landcolor="rgb(240,240,240)",
             ),
         )
 
         st.plotly_chart(fig, width="stretch")
+
+
+
+
+    # ------------------ Download ------------------
+    st.download_button(
+        "Download comparison table (CSV)",
+        df.to_csv(index=False),
+        "country_comparison.csv",
+        "text/csv",
+    )
 
 st.caption("Built with Streamlit • Data source: World Bank")
