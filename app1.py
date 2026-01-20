@@ -1,5 +1,4 @@
 
-
 import time
 import math
 import requests
@@ -13,17 +12,6 @@ from streamlit_autorefresh import st_autorefresh
 # ==================================================
 st.set_page_config(layout="wide")
 st.title("Global Country Comparison Dashboard")
-
-# ==================================================
-# MODE SWITCH
-# ==================================================
-mode = st.sidebar.radio(
-    "Dashboard mode",
-    ["-- Live (Demographics)", "- Static (Insights & Trends)"]
-)
-
-if mode.startswith("--"):
-    st_autorefresh(interval=5_000, key="refresh")
 
 # ==================================================
 # HELPERS
@@ -49,14 +37,14 @@ def index_series(series):
         return []
     return [(y, v / base_val * 100) for y, v in series]
 
-def growth_badge(rate):
-    if rate is None:
-        return "- No data"
-    if rate > 1.5:
+def growth_badge(val):
+    if val is None:
+        return "No data"
+    if val > 1.5:
         return "Fast growth"
-    if rate > 0.5:
-        return "Moderate growth"
-    return "-- Slow / shrinking"
+    if val > 0.5:
+        return "🟡 Moderate growth"
+    return "Slow / shrinking"
 
 @st.cache_data
 def get_countries():
@@ -89,7 +77,8 @@ def get_indicator(code, indicator):
 def get_time_series(code, indicator):
     try:
         r = requests.get(
-            f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json&per_page=1000&page=1",
+            f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}"
+            f"?format=json&per_page=1000&page=1",
             timeout=10,
         )
         js = r.json()
@@ -106,8 +95,18 @@ def get_time_series(code, indicator):
     return sorted(series)
 
 # ==================================================
-# SIDEBAR CONTROLS
+# SIDEBAR (ALWAYS VISIBLE)
 # ==================================================
+st.sidebar.header("Controls")
+
+mode = st.sidebar.radio(
+    "Dashboard mode",
+    ["-- Live (Demographics)", "- Static (Insights & Trends)"]
+)
+
+if mode.startswith("--"):
+    st_autorefresh(interval=5_000, key="refresh")
+
 countries = get_countries()
 
 STORIES = {
@@ -124,23 +123,24 @@ STORIES = {
     },
 }
 
-story = st.sidebar.selectbox("Story preset", list(STORIES.keys()))
+story = st.sidebar.selectbox("📘 Story preset", list(STORIES.keys()))
+
+selected = st.sidebar.multiselect(
+    "Select countries",
+    list(countries.keys()),
+    ["World", "United States", "China"],
+    max_selections=5,
+    disabled=(story != "None"),
+)
 
 if story != "None":
     selected = STORIES[story]["countries"]
-else:
-    selected = st.sidebar.multiselect(
-        "Select countries",
-        list(countries.keys()),
-        ["World", "United States", "China"],
-        max_selections=5,
-    )
 
 # ==================================================
 # 🔴 LIVE MODE
 # ==================================================
 if mode.startswith("--"):
-    st.subheader("- Live Population Growth (Estimated)")
+    st.subheader("-- Live Population Growth (Estimated)")
 
     GLOBAL_BIRTHS = 140_000_000
     GLOBAL_DEATHS = 60_000_000
@@ -178,7 +178,7 @@ if mode.startswith("--"):
     st.caption("Live values are extrapolated from annual demographic rates.")
 
 # ==================================================
-# ⚪ STATIC MODE — INSIGHTS
+# ⚪ STATIC MODE
 # ==================================================
 else:
     INDICATORS = {
@@ -202,14 +202,12 @@ else:
 
     # ---------- INSIGHTS ----------
     with tab_insight:
-        st.subheader("Country insights")
-
         for _, row in df.iterrows():
             st.markdown(f"""
 ### {row['Country']}
 - Population: **{format_compact(row['Population'])}**
-- Income level: **{format_compact(row['GDP per Capita'])} USD**
-- Inequality: **{row['Gini Index'] if row['Gini Index'] else 'N/A'}**
+- GDP per capita: **{format_compact(row['GDP per Capita'])} USD**
+- Inequality (Gini): **{row['Gini Index'] if row['Gini Index'] else 'N/A'}**
 - Growth signal: **{growth_badge(row['GDP per Capita'] / 10000 if row['GDP per Capita'] else None)}**
 
 [History](https://en.wikipedia.org/wiki/History_of_{row['Country'].replace(' ', '_')})
@@ -225,7 +223,10 @@ else:
         trend_label = st.selectbox("Indicator", list(TREND_INDICATORS.keys()))
         trend_metric = TREND_INDICATORS[trend_label]
 
-        indexed = st.checkbox("Index values (base = first year)", value=story != "None")
+        indexed = st.checkbox(
+            "Index values (100 = first year)",
+            value=(story != "None")
+        )
 
         fig = go.Figure()
         has_data = False
