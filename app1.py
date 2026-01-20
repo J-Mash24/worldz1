@@ -295,7 +295,7 @@ else:
 
     # ------------------ Map ------------------
     with tab_map:
-        map_metric = st.selectbox(
+      map_metric = st.selectbox(
         "Map metric",
         {
             "Population": "SP.POP.TOTL",
@@ -309,18 +309,14 @@ else:
     values = []
 
     for name, code in countries.items():
-        value = get_indicator(code, map_metric)
+        val = get_indicator(code, map_metric)
 
-        # ✅ FILTER INVALID DATA (CRITICAL)
-        if value is None:
-            continue
-        if isinstance(value, float) and pd.isna(value):
-            continue
-
+        # Keep country even if value is missing
         locations.append(code)
-        values.append(value)
+        values.append(val if val is not None else float("nan"))
 
-    if not locations:
+    # 🔑 Check that we have at least SOME real values
+    if all(pd.isna(v) for v in values):
         st.warning("No data available for this indicator.")
     else:
         fig = go.Figure(
@@ -332,6 +328,8 @@ else:
                 colorbar_title=map_metric,
                 marker_line_color="white",
                 marker_line_width=0.4,
+                zmin=pd.Series(values).min(skipna=True),
+                zmax=pd.Series(values).max(skipna=True),
             )
         )
 
@@ -342,14 +340,15 @@ else:
                 showframe=False,
                 showcoastlines=True,
                 coastlinecolor="gray",
-                showland=True,
-                landcolor="rgb(240,240,240)",
                 showcountries=True,
                 countrycolor="white",
+                showland=True,
+                landcolor="rgb(240,240,240)",
             ),
         )
 
         st.plotly_chart(fig, width="stretch")
+
 
 
     # ------------------ Download ------------------
