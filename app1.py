@@ -227,11 +227,30 @@ with tab4:
 # TAB 5 — Map
 # =========================
 with tab5:
-    map_values = {
-        countries[row["Country"]]: row[map_metric]
-        for _, row in df.iterrows()
-        if row[map_metric] is not None
-    }
+    map_values = {}
+
+    for name, code in countries.items():
+        try:
+            if map_metric == "Population":
+                value = all_pops.get(name)
+
+            elif map_metric == "GDP":
+                value = get_indicator(code, "NY.GDP.MKTP.CD")
+
+            elif map_metric == "GDP per Capita":
+                value = get_indicator(code, "NY.GDP.PCAP.CD")
+
+            elif map_metric == "Gini Index":
+                value = get_indicator(code, "SI.POV.GINI")
+
+            else:
+                value = None
+
+        except:
+            value = None
+
+        if value is not None:
+            map_values[code] = value
 
     fig_map = go.Figure(
         go.Choropleth(
@@ -240,14 +259,32 @@ with tab5:
             locationmode="ISO-3",
             colorscale="Viridis",
             colorbar_title=map_metric,
+            marker_line_color="white",
+            marker_line_width=0.3,
         )
     )
+
     fig_map.update_layout(
         title=f"World Map – {map_metric}",
-        geo=dict(showframe=False, showcoastlines=False),
+        geo=dict(
+            showframe=False,
+            showcoastlines=True,
+            coastlinecolor="gray",
+            projection_type="natural earth",
+        ),
     )
 
     st.plotly_chart(fig_map, width="stretch")
+
+selected_codes = [countries[name] for name in selected_names]
+
+fig_map.update_traces(
+    marker_line_width=[
+        2 if code in selected_codes else 0.3
+        for code in map_values.keys()
+    ]
+)
+
 
 # =========================
 # Download
