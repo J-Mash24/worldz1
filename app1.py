@@ -27,18 +27,29 @@ if mode.startswith("--"):
 # ==================================================
 # HELPERS
 # ==================================================
+import math
+
 def format_compact(n):
     if n is None:
         return "N/A"
-    if n >= 1e12:
-        return f"{n/1e12:.1f}T"
-    if n >= 1e9:
-        return f"{n/1e9:.1f}B"
-    if n >= 1e6:
-        return f"{n/1e6:.1f}M"
-    if n >= 1e3:
-        return f"{n/1e3:.1f}K"
-    return str(int(n))
+
+    # Handle NaN (THIS FIXES THE ERROR)
+    if isinstance(n, float) and math.isnan(n):
+        return "N/A"
+
+    try:
+        if n >= 1e12:
+            return f"{n/1e12:.1f}T"
+        elif n >= 1e9:
+            return f"{n/1e9:.1f}B"
+        elif n >= 1e6:
+            return f"{n/1e6:.1f}M"
+        elif n >= 1e3:
+            return f"{n/1e3:.1f}K"
+        return f"{int(n):,}"
+    except Exception:
+        return "N/A"
+
 
 @st.cache_data
 def get_countries():
