@@ -227,32 +227,32 @@ with tab4:
 # TAB 5 — Map
 # =========================
 with tab5:
+    selected_codes = [countries[name] for name in selected_names]
+
     map_values = {}
 
     for name, code in countries.items():
         try:
             if map_metric == "Population":
                 value = all_pops.get(name)
-
             elif map_metric == "GDP":
                 value = get_indicator(code, "NY.GDP.MKTP.CD")
-
             elif map_metric == "GDP per Capita":
                 value = get_indicator(code, "NY.GDP.PCAP.CD")
-
             elif map_metric == "Gini Index":
                 value = get_indicator(code, "SI.POV.GINI")
-
             else:
                 value = None
-
         except:
             value = None
 
         if value is not None:
             map_values[code] = value
 
-    fig_map = go.Figure(
+    fig_map = go.Figure()
+
+    # Base map (all countries)
+    fig_map.add_trace(
         go.Choropleth(
             locations=list(map_values.keys()),
             z=list(map_values.values()),
@@ -261,6 +261,26 @@ with tab5:
             colorbar_title=map_metric,
             marker_line_color="white",
             marker_line_width=0.3,
+            showscale=True,
+        )
+    )
+
+    # Highlight selected countries
+    highlight_values = {
+        code: map_values[code]
+        for code in selected_codes
+        if code in map_values
+    }
+
+    fig_map.add_trace(
+        go.Choropleth(
+            locations=list(highlight_values.keys()),
+            z=list(highlight_values.values()),
+            locationmode="ISO-3",
+            colorscale="Viridis",
+            marker_line_color="black",
+            marker_line_width=2.5,
+            showscale=False,
         )
     )
 
@@ -276,14 +296,6 @@ with tab5:
 
     st.plotly_chart(fig_map, width="stretch")
 
-selected_codes = [countries[name] for name in selected_names]
-
-fig_map.update_traces(
-    marker_line_width=[
-        2 if code in selected_codes else 0.3
-        for code in map_values.keys()
-    ]
-)
 
 
 # =========================
