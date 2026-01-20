@@ -14,11 +14,11 @@ st.set_page_config(layout="wide")
 st.title("Global Country Comparison Dashboard")
 
 # ==================================================
-# MODE SWITCH
+# MODE SWITCH (CRITICAL)
 # ==================================================
 mode = st.sidebar.radio(
     "Dashboard mode",
-    ["-- Live (Population only)", "- Static (Full analysis)"]
+    ["-- Live (Demographics)", "- Static (Full Analysis)"],
 )
 
 # Auto-refresh ONLY in live mode
@@ -26,18 +26,18 @@ if mode.startswith("--"):
     st_autorefresh(interval=5_000, key="refresh")
 
 # ==================================================
-# Helpers
+# HELPERS
 # ==================================================
 def format_compact(n):
     if n is None:
         return "N/A"
     if n >= 1e12:
         return f"{n/1e12:.1f}T"
-    elif n >= 1e9:
+    if n >= 1e9:
         return f"{n/1e9:.1f}B"
-    elif n >= 1e6:
+    if n >= 1e6:
         return f"{n/1e6:.1f}M"
-    elif n >= 1e3:
+    if n >= 1e3:
         return f"{n/1e3:.1f}K"
     return str(int(n))
 
@@ -57,29 +57,30 @@ def get_indicator(code, indicator):
     return latest["value"]
 
 @st.cache_data
-def get_all_populations(countries_dict):
-    return {name: get_indicator(code, "SP.POP.TOTL") for name, code in countries_dict.items()}
+def get_time_series(code, indicator):
+    url = f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json&per_page=1000"
+    data = requests.get(url, timeout=10).json()[1]
+    return sorted(
+        [(int(d["date"]), d["value"]) for d in data if d["value"] is not None]
+    )
 
 # ==================================================
-# Sidebar controls
+# SIDEBAR CONTROLS
 # ==================================================
 countries = get_countries()
 
-selected_names = st.sidebar.multiselect(
+selected = st.sidebar.multiselect(
     "Select countries",
     list(countries.keys()),
-    default=["World", "United States", "India", "China"],
+    ["World", "United States", "India"],
     max_selections=5,
 )
 
 # ==================================================
-# LIVE MODE (Population only)
+# 🔴 LIVE MODE — DEMOGRAPHICS ONLY
 # ==================================================
 if mode.startswith("--"):
-    st.subheader("-- Live population comparison (estimated)")
-
-    all_pops = get_all_populations(countries)
-    world_pop = all_pops["World"]
+    st.subheader("-- Live Population Growth (Estimated)")
 
     GLOBAL_BIRTHS = 140_000_000
     GLOBAL_DEATHS = 60_000_000
@@ -89,39 +90,38 @@ if mode.startswith("--"):
         st.session_state.start_time = time.time()
 
     elapsed = time.time() - st.session_state.start_time
+    world_pop = get_indicator("WLD", "SP.POP.TOTL")
 
     values = []
-    for name in selected_names:
-        pop = all_pops.get(name)
-        if pop:
-            growth = (GLOBAL_BIRTHS - GLOBAL_DEATHS) * (pop / world_pop)
-            values.append(growth / SECONDS_PER_YEAR * elapsed)
-        else:
-            values.append(0)
+    for name in selected:
+        pop = get_indicator(countries[name], "SP.POP.TOTL")
+        growth = (GLOBAL_BIRTHS - GLOBAL_DEATHS) * (pop / world_pop)
+        values.append(growth / SECONDS_PER_YEAR * elapsed)
 
     fig = go.Figure(
         go.Bar(
-            x=selected_names,
+            x=selected,
             y=values,
             text=[format_compact(v) for v in values],
             textposition="outside",
         )
     )
+
     fig.update_layout(
-        title="Estimated population growth since page load",
+        title="Estimated population increase since page load",
         yaxis_range=[0, max(values) * 1.3 if values else 1],
         showlegend=False,
     )
 
     st.plotly_chart(fig, width="stretch")
 
-    st.caption("-- Live mode updates every 5 seconds. Values are estimates.")
+    st.caption("-- Live values are extrapolated from annual demographic rates.")
 
 # ==================================================
-# STATIC MODE (Full analysis)
+# ⚪ STATIC MODE — FULL ANALYSIS
 # ==================================================
 else:
-    st.subheader("- Static country analysis")
+    st.subheader("- Static Country Analysis")
 
     INDICATORS = {
         "Population": "SP.POP.TOTL",
@@ -132,139 +132,169 @@ else:
         "Literacy Rate %": "SE.ADT.LITR.ZS",
     }
 
-    data = {}
-    for name in selected_names:
+    rows = []
+    for name in selected:
         code = countries[name]
-        data[name] = {}
+        row = {"Country": name}
         for label, ind in INDICATORS.items():
             try:
-                data[name][label] = get_indicator(code, ind)
+                row[label] = get_indicator(code, ind)
             except:
-                data[name][label] = None
+                row[label] = None
+        rows.append(row)
 
-    df = pd.DataFrame.from_dict(data, orient="index").reset_index()
-    df.rename(columns={"index": "Country"}, inplace=True)
+    df = pd.DataFrame(rows)
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Demographics", "Economy", "Inequality", "Map"]
+    # -------------------------
+    # STATIC TABS
+    # -------------------------
+    tab_demo, tab_econ, tab_ineq, tab_trends, tab_map = st.tabs(
+        ["Demographics", "Economy", "Inequality & Education", "Trends", "Map"]
     )
 
-    with tab1:
-        st.plotly_chart(
-            go.Figure(
-                go.Bar(
-                    x=df["Country"],
-                    y=df["Population"],
-                    text=[format_compact(v) for v in df["Population"]],
-                    textposition="outside",
-                )
-            ).update_layout(
-                title="Population",
-                yaxis_range=[0, df["Population"].max() * 1.2],
-                showlegend=False,
-            ),
-            width="stretch",
+    # --- Demographics ---
+    with tab_demo:
+        fig = go.Figure(
+            go.Bar(
+                x=df["Country"],
+                y=df["Population"],
+                text=[format_compact(v) for v in df["Population"]],
+                textposition="outside",
+            )
         )
-
-    with tab2:
-        st.plotly_chart(
-            go.Figure(
-                go.Bar(
-                    x=df["Country"],
-                    y=df["GDP"],
-                    text=[format_compact(v) for v in df["GDP"]],
-                    textposition="outside",
-                )
-            ).update_layout(
-                title="GDP (current USD)",
-                yaxis_range=[0, df["GDP"].max() * 1.2],
-                showlegend=False,
-            ),
-            width="stretch",
+        fig.update_layout(
+            title="Population",
+            yaxis_range=[0, df["Population"].max() * 1.2],
+            showlegend=False,
         )
+        st.plotly_chart(fig, width="stretch")
 
-    with tab3:
-        st.plotly_chart(
-            go.Figure(
+    # --- Economy ---
+    with tab_econ:
+        fig = go.Figure(
+            go.Bar(
+                x=df["Country"],
+                y=df["GDP"],
+                text=[format_compact(v) for v in df["GDP"]],
+                textposition="outside",
+            )
+        )
+        fig.update_layout(
+            title="GDP (current USD)",
+            yaxis_range=[0, df["GDP"].max() * 1.2],
+            showlegend=False,
+        )
+        st.plotly_chart(fig, width="stretch")
+
+    # --- Inequality & Education ---
+    with tab_ineq:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            fig = go.Figure(
                 go.Bar(
                     x=df["Country"],
                     y=df["Gini Index"],
                     text=[f"{v:.1f}" if v else "N/A" for v in df["Gini Index"]],
                     textposition="outside",
                 )
-            ).update_layout(
+            )
+            fig.update_layout(
                 title="Income Inequality (Gini Index)",
                 yaxis_range=[0, df["Gini Index"].max() * 1.2],
                 showlegend=False,
-            ),
-            width="stretch",
-        )
+            )
+            st.plotly_chart(fig, width="stretch")
 
-    with tab4:
-      st.subheader("Time Series Trends")
-
-    trend_metric = st.selectbox(
-        "Select indicator",
-        list(TREND_INDICATORS.keys()),
-    )
-
-    start_year, end_year = st.slider(
-        "Year range",
-        min_value=1960,
-        max_value=datetime.now().year,
-        value=(1990, datetime.now().year),
-    )
-
-    fig_trend = go.Figure()
-
-    for name in selected_names:
-        code = countries[name]
-        series = get_time_series(code, TREND_INDICATORS[trend_metric], start_year)
-
-        years = [y for y, v in series if y <= end_year]
-        values = [v for y, v in series if y <= end_year]
-
-        if values:
-            fig_trend.add_trace(
-                go.Scatter(
-                    x=years,
-                    y=values,
-                    mode="lines+markers",
-                    name=name,
+        with col2:
+            fig = go.Figure(
+                go.Bar(
+                    x=df["Country"],
+                    y=df["Literacy Rate %"],
+                    text=[f"{v:.1f}%" if v else "N/A" for v in df["Literacy Rate %"]],
+                    textposition="outside",
                 )
             )
+            fig.update_layout(
+                title="Adult Literacy Rate (%)",
+                yaxis_range=[0, 100],
+                showlegend=False,
+            )
+            st.plotly_chart(fig, width="stretch")
 
-    fig_trend.update_layout(
-        title=f"{trend_metric} over time",
-        xaxis_title="Year",
-        yaxis_title=trend_metric,
-        hovermode="x unified",
-    )
+    # --- Trends ---
+    with tab_trends:
+        metric = st.selectbox(
+            "Indicator",
+            {
+                "Population": "SP.POP.TOTL",
+                "GDP": "NY.GDP.MKTP.CD",
+                "GDP per Capita": "NY.GDP.PCAP.CD",
+            },
+        )
 
-    st.plotly_chart(fig_trend, width="stretch")
+        fig = go.Figure()
+        for name in selected:
+            series = get_time_series(countries[name], metric)
+            years = [y for y, v in series]
+            values = [v for y, v in series]
+            fig.add_trace(go.Scatter(x=years, y=values, mode="lines", name=name))
 
-    st.caption(
-        "Time series are annual World Bank values. "
-        "Some indicators may have missing years."
-    )
+        fig.update_layout(
+            title="Historical trends",
+            hovermode="x unified",
+        )
 
+        st.plotly_chart(fig, width="stretch")
 
+    # --- Map ---
+    with tab_map:
+        map_metric = st.selectbox(
+            "Map metric",
+            {
+                "Population": "SP.POP.TOTL",
+                "GDP": "NY.GDP.MKTP.CD",
+                "GDP per Capita": "NY.GDP.PCAP.CD",
+                "Gini Index": "SI.POV.GINI",
+            },
+        )
+
+        map_values = {
+            code: get_indicator(code, map_metric)
+            for _, code in countries.items()
+        }
+
+        fig = go.Figure(
+            go.Choropleth(
+                locations=list(map_values.keys()),
+                z=list(map_values.values()),
+                locationmode="ISO-3",
+                colorscale="Viridis",
+                colorbar_title=map_metric,
+            )
+        )
+
+        fig.update_layout(
+            title="World map",
+            geo=dict(showframe=False, showcoastlines=True),
+        )
+
+        st.plotly_chart(fig, width="stretch")
+
+    # --- Download ---
     st.download_button(
         "Download comparison table (CSV)",
         df.to_csv(index=False),
-        file_name="country_comparison.csv",
-        mime="text/csv",
+        "country_comparison.csv",
+        "text/csv",
     )
 
     with st.expander("Methodology"):
         st.markdown("""
         - Data source: World Bank
-        - Live mode uses estimated growth rates
-        - Static mode uses latest available yearly data
+        - Live values are extrapolated estimates
+        - Static data shows latest available year
         - GDP per capita is an income proxy
         """)
 
-# ==================================================
-# Footer
-# ==================================================
 st.caption("Built with Streamlit • Data from World Bank")
