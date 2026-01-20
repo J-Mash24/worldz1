@@ -295,6 +295,7 @@ else:
 
     # ------------------ Map ------------------
     # ------------------ Map ------------------
+# ------------------ Map ------------------
 with tab_map:
     MAP_INDICATORS = {
         "Population": "SP.POP.TOTL",
@@ -314,10 +315,15 @@ with tab_map:
         locations.append(code)
         values.append(val if val is not None else float("nan"))
 
+    selected_codes = [countries[name] for name in selected]
+
     if all(pd.isna(v) for v in values):
         st.warning("No data available for this indicator.")
     else:
-        fig = go.Figure(
+        fig = go.Figure()
+
+        # --- Base map (all countries) ---
+        fig.add_trace(
             go.Choropleth(
                 locations=locations,
                 z=values,
@@ -326,6 +332,28 @@ with tab_map:
                 colorbar_title=map_label,
                 marker_line_color="white",
                 marker_line_width=0.4,
+                showscale=True,
+            )
+        )
+
+        # --- Highlight selected countries ---
+        highlight_locs = []
+        highlight_vals = []
+
+        for code, val in zip(locations, values):
+            if code in selected_codes:
+                highlight_locs.append(code)
+                highlight_vals.append(val)
+
+        fig.add_trace(
+            go.Choropleth(
+                locations=highlight_locs,
+                z=highlight_vals,
+                locationmode="ISO-3",
+                colorscale="Viridis",
+                marker_line_color="black",
+                marker_line_width=2.5,  # 👈 highlight thickness
+                showscale=False,
             )
         )
 
