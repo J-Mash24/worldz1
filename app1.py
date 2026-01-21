@@ -79,7 +79,7 @@ REGIONS = {
     "Western Europe": ["Germany","France","Austria","Switzerland"],
     "Southern Europe": ["Italy","Spain","Portugal","Greece"],
     "Balkans": ["Serbia","Croatia","Bosnia and Herzegovina","Albania","North Macedonia", "Slovenia"],
-    "Warsaw Pact (historic)": ["Poland","Hungary","Czech Republic","Slovakia","Romania","Bulgaria"],
+    "Central Europe": ["Poland","Hungary","Czech Republic","Slovakia","Romania","Ukraine","Bulgaria"],
     "EU": ["Austria", "Belgium", "Bulgaria", "Croatia", "Republic of Cyprus", "Czechia", "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", "Ireland", "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta", "Netherlands", "Poland", "Portugal", "Romania", "Slovakia", "Slovenia", "Spain", "Sweden"],
     "BRICS": ["Brazil","Russia","India","China","South Africa"],
     "The Caucasus": ["Russia", "Georgia", "Azerbaijan", "Armenia", "Turkey", "Iran"],
@@ -87,7 +87,7 @@ REGIONS = {
     "Middle East": ["Saudi Arabia","United Arab Emirates","Qatar","Oman", "Israel","Syria", "Lebanon", "Jordan"],
     "South Asia": ["Afghanistan", "Bangladesh", "Bhutan", "India", "Maldives", "Nepal", "Pakistan", "Sri Lanka"],
     "East Asia": ["China","Japan","South Korea"],
-    "West Africa": ["Nigeria","Ghana","Senegal"],
+    "West Africa": ["Benin", "Burkina Faso", "Cape Verde", "Côte d'Ivoire", "The Gambia", "Ghana", "Guinea", "Guinea-Bissau", "Liberia", "Mali", "Mauritania", "Niger", "Nigeria", "Senegal", "Sierra Leone", "Togo"],
     "Central Africa": ["Angola", "Cameroon", "Central African Republic", "Chad", "Republic of the Congo", "Democratic Republic of the Congo", "Equatorial Guinea", "Gabon","São Tomé and Príncipe"],
     "Eastern Africa": ["Algeria", "Egypt", "Libya", "Morocco", "Tunisia"],
     "Southern Africa": ["Botswana", "Eswatini", "Lesotho", "Madagascar", "Malawi", "Mauritius", "Mozambique", "Namibia", "South Africa", "Zambia", "Zimbabwe"],
@@ -101,7 +101,7 @@ REGIONS = {
 
 REGION_INFO = {
     "Baltic States": "Modern, high-income, market-oriented economies, characterized by post-Soviet transition, strong EU integration, liberal policies, and a focus on attracting investment, with each country showing unique strengths like Estonia's tech (e-solutions), Lithuania's industry/innovation, and Latvia's transport/logistics, all interconnected and competitive within the EU single market.",
-    "Warsaw Pact (historic)": "Characterized by transition to market economies, integration into the EU, growth in tech/services, skilled labor, and ongoing development, with Czechia and Slovakia often seen as most advanced within the Visegrád Group (V4). They are key emerging markets with growing digital ecosystems, skilled workforces, and significant EU funding, but face challenges like youth emigration and regional disparities.",
+    "Central Europe": "Characterized by transition to market economies, integration into the EU, growth in tech/services, skilled labor, and ongoing development, with Czechia and Slovakia often seen as most advanced within the Visegrád Group (V4). They are key emerging markets with growing digital ecosystems, skilled workforces, and significant EU funding, but face challenges like youth emigration and regional disparities.",
     "Western Europe": "Advanced, capitalist systems with strong social welfare, high GDP, and significant service/tech sectors, evolving from post-WWII reconstruction (Marshall Plan) and Keynesian policies into integrated markets (EU) emphasizing free movement, trade, and robust welfare states, characterized by high living standards and financial hubs like London & Frankfurt.",
     "Southern Europe": "Characterized by strong service sectors (especially tourism), significant agriculture (olives, wine), historical industrial centers, and recent reforms boosting flexibility, but also regional disparities (e.g., North vs. South Italy) and reliance on FDI, balancing tradition with modern growth in renewables, tech, and manufacturing.",
     "Scandinavia": "Mixed-market systems blending free-market capitalism with extensive socialist-style welfare states, characterized by high living standards, strong social safety nets (universal healthcare, education), low income inequality, high labor participation (especially women), and strong unions, funded by high taxes and supporting competitive private enterprise alongside public services.",
@@ -231,9 +231,28 @@ if mode == "Static":
         "GDP": "NY.GDP.MKTP.CD",
         "GDP per Capita": "NY.GDP.PCAP.CD",
         "Gini Index": "SI.POV.GINI",
-    }
+    
+         # Economy & society
+        "Population": "SP.POP.TOTL",
+        "GDP": "NY.GDP.MKTP.CD",
+        "GDP per Capita": "NY.GDP.PCAP.CD",
+        "Gini Index": "SI.POV.GINI",
 
-    tab_compare, tab_trends, tab_map = st.tabs(["Comparison","Trends","Map"])
+    # Trade
+        "Imports (USD)": "NE.IMP.GNFS.CD",
+        "Exports (USD)": "NE.EXP.GNFS.CD",
+
+    # Military
+        "Military Spending (USD)": "MS.MIL.XPND.CD",
+        "Military Spending (% GDP)": "MS.MIL.XPND.GD.ZS",
+        "Armed Forces Personnel": "MS.MIL.TOTL.P1",
+}
+
+
+    tab_compare, tab_trends, tab_military, tab_trade, tab_map = st.tabs(
+    ["Comparison", "Trends", "Military", "Trade", "Map"]
+)
+
 
     # ---------- COMPARISON ----------
     with tab_compare:
@@ -318,6 +337,126 @@ if mode == "Static":
         )
 
         st.plotly_chart(fig, use_container_width=True)
+
+    with tab_military:
+        st.subheader("Military capacity comparison")
+
+    metric_label = st.selectbox(
+        "Military metric",
+        [
+            "Military Spending (USD)",
+            "Military Spending (% GDP)",
+            "Armed Forces Personnel",
+        ],
+    )
+
+    metric = INDICATORS[metric_label]
+
+    labels, values = [], []
+
+    for label, members in groups.items():
+        vals, gdp_vals = [], []
+
+        for c in members:
+            code = countries.get(c)
+            if not code:
+                continue
+
+            v = get_indicator(code, metric)
+            gdp = get_indicator(code, "NY.GDP.MKTP.CD")
+
+            if v is not None:
+                vals.append(v)
+                if gdp:
+                    gdp_vals.append(gdp)
+
+        if not vals:
+            agg = None
+        elif "USD" in metric_label or "Personnel" in metric_label:
+            agg = sum(vals)
+        else:
+            # % GDP → GDP-weighted
+            agg = sum(v * g for v, g in zip(vals, gdp_vals)) / sum(gdp_vals) if gdp_vals else None
+
+        labels.append(label)
+        values.append(agg)
+
+    fig = go.Figure(go.Bar(
+        x=labels,
+        y=values,
+        text=[format_compact(v) for v in values],
+        textposition="outside",
+    ))
+
+    fig.update_layout(
+        title=metric_label,
+        yaxis=dict(autorange=True),
+        showlegend=False,
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.caption(
+        "Source: World Bank. Military indicators are proxies for capacity, not combat effectiveness."
+    )
+
+
+    with tab_trade:
+      st.subheader("Trade comparison")
+
+    trade_view = st.radio(
+        "View",
+        ["Imports", "Exports", "Trade Balance"],
+        horizontal=True,
+    )
+
+    labels, values = [], []
+
+    for label, members in groups.items():
+        imports, exports = [], []
+
+        for c in members:
+            code = countries.get(c)
+            if not code:
+                continue
+
+            imp = get_indicator(code, "NE.IMP.GNFS.CD")
+            exp = get_indicator(code, "NE.EXP.GNFS.CD")
+
+            if imp:
+                imports.append(imp)
+            if exp:
+                exports.append(exp)
+
+        if trade_view == "Imports":
+            agg = sum(imports) if imports else None
+        elif trade_view == "Exports":
+            agg = sum(exports) if exports else None
+        else:
+            agg = (sum(exports) - sum(imports)) if imports or exports else None
+
+        labels.append(label)
+        values.append(agg)
+
+    fig = go.Figure(go.Bar(
+        x=labels,
+        y=values,
+        text=[format_compact(v) for v in values],
+        textposition="outside",
+    ))
+
+    fig.update_layout(
+        title=f"{trade_view} (USD)",
+        yaxis=dict(autorange=True),
+        showlegend=False,
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.caption(
+        "Positive trade balance indicates net exporter; negative indicates net importer."
+    )
+
 
     # ---------- MAP ----------
     with tab_map:
