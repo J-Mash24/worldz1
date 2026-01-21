@@ -130,6 +130,62 @@ with st.sidebar.expander("Region definitions"):
             st.caption(", ".join(REGIONS[r]))
 
 # ==================================================
+# LIVE MODE (FIXED)
+# ==================================================
+if mode == "Live":
+    st.subheader("-- Live Population Growth (Estimated)")
+
+    GLOBAL_BIRTHS = 140_000_000
+    GLOBAL_DEATHS = 60_000_000
+    SECONDS_PER_YEAR = 365 * 24 * 3600
+
+    if "start_time" not in st.session_state:
+        st.session_state.start_time = time.time()
+
+    elapsed = time.time() - st.session_state.start_time
+    world_pop = get_indicator("WLD", "SP.POP.TOTL")
+
+    labels, values = [], []
+
+    for label, members in groups.items():
+        total_growth_per_year = 0
+
+        for c in members:
+            code = countries.get(c)
+            pop = get_indicator(code, "SP.POP.TOTL")
+
+            if pop and world_pop:
+                total_growth_per_year += (
+                    (GLOBAL_BIRTHS - GLOBAL_DEATHS) * (pop / world_pop)
+                )
+
+        labels.append(label)
+        values.append(total_growth_per_year / SECONDS_PER_YEAR * elapsed)
+
+    if not labels:
+        st.info("Select countries or regions to see live data.")
+    else:
+        fig = go.Figure(go.Bar(
+            x=labels,
+            y=values,
+            text=[format_compact(v) for v in values],
+            textposition="outside",
+        ))
+
+        fig.update_layout(
+            title="Estimated population increase since page load",
+            yaxis=dict(autorange=True),
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.caption(
+        "Live values are extrapolated from annual global demographic rates "
+        "(not real-time census data)."
+    )
+
+
+# ==================================================
 # STATIC MODE
 # ==================================================
 if mode == "Static":
