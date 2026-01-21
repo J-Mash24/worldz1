@@ -80,7 +80,7 @@ REGIONS = {
     "Southern Europe": ["Italy","Spain","Portugal","Greece"],
     "Balkans": ["Serbia","Croatia","Bosnia and Herzegovina","Albania","North Macedonia", "Slovenia"],
     "Warsaw Pact (historic)": ["Poland","Hungary","Czech Republic","Slovakia","Romania","Bulgaria"],
-    "EU": ["a 27 countries coalition"],
+    "EU": ["A 27 countries coalition"],
     "BRICS": ["Brazil","Russia","India","China","South Africa"],
     "Middle East": ["Saudi Arabia","United Arab Emirates","Qatar","Oman", "Israel","Syria", "Lebanon", "Jordan"],
     "South Asia": ["Afghanistan", "Bangladesh", "Bhutan", "India", "Maldives", "Nepal", "Pakistan", "Sri Lanka"],
