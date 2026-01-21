@@ -14,7 +14,7 @@ st.set_page_config(layout="wide")
 st.title("Global Country & Region Comparison Dashboard")
 
 # ==================================================
-# SAFE HELPERS
+# HELPERS
 # ==================================================
 def safe_json(url):
     try:
@@ -70,29 +70,25 @@ def get_series(code, indicator):
     )
 
 # ==================================================
-# REGIONS & BLOCS (EXPANDED)
+# REGIONS & EXPLANATIONS
 # ==================================================
 REGIONS = {
-    "Western Europe": ["Germany","France","Netherlands","Belgium","Austria","Switzerland"],
-    "Benelux": ["Belgium","Netherlands","Luxembourg"],
     "Baltic States": ["Estonia","Latvia","Lithuania"],
-    "Scandinavia": ["Sweden","Norway","Denmark","Finland", "Island"],
+    "Benelux": ["Belgium","Netherlands","Luxembourg"],
+    "Scandinavia": ["Sweden","Norway","Denmark","Finland"],
+    "Western Europe": ["Germany","France","Austria","Switzerland"],
     "Southern Europe": ["Italy","Spain","Portugal","Greece"],
     "Balkans": ["Serbia","Croatia","Bosnia and Herzegovina","Albania","North Macedonia"],
     "Warsaw Pact (historic)": ["Poland","Hungary","Czech Republic","Slovakia","Romania","Bulgaria"],
-    "East Asia": ["China","Japan","South Korea"],
-    "South Asia": ["India","Pakistan","Bangladesh"],
-    "Gulf Monarchies": ["Saudi Arabia","United Arab Emirates","Qatar","Oman","Kuwait"],
-    "West Africa": ["Nigeria","Ghana","Senegal"],
-    "Arab Spring": ["Egypt","Morocco","Tunisia"],
-    "EU": ["A bunch of countries :)"],
+    "EU": ["Germany","France","Italy","Spain","Poland","Netherlands"],
     "BRICS": ["Brazil","Russia","India","China","South Africa"],
 }
 
 REGION_INFO = {
-    "Benelux": "Highly integrated low-trade-barrier economies.",
+    "Baltic States": "Small open economies, strong EU integration, high digitalization.",
     "Warsaw Pact (historic)": "Former socialist economies with shared institutional legacy.",
     "Balkans": "Post-Yugoslav and Southeast European transition economies.",
+    "Benelux": "Highly integrated, trade-driven Western European economies.",
 }
 
 # ==================================================
@@ -106,10 +102,7 @@ mode = st.sidebar.radio("Mode", ["Live", "Static"])
 if mode == "Live":
     st_autorefresh(interval=5000, key="refresh")
 
-selection_type = st.sidebar.radio(
-    "Compare",
-    ["Countries", "Regions / Blocs"]
-)
+selection_type = st.sidebar.radio("Compare", ["Countries", "Regions / Blocs"])
 
 if selection_type == "Countries":
     selected_items = st.sidebar.multiselect(
@@ -119,7 +112,6 @@ if selection_type == "Countries":
         max_selections=6
     )
     groups = {c:[c] for c in selected_items}
-
 else:
     selected_items = st.sidebar.multiselect(
         "Select regions / blocs",
@@ -128,68 +120,30 @@ else:
     )
     groups = {r:REGIONS[r] for r in selected_items}
 
-# Sidebar explanations
-for r in selected_items:
-    if r in REGION_INFO:
-        st.sidebar.caption(f"**{r}:** {REGION_INFO[r]}")
-        st.sidebar.caption(", ".join(REGIONS[r]))
-
-# ==================================================
-# LIVE MODE
-# ==================================================
-if mode == "Live":
-    st.subheader("Live Population Growth (Estimated)")
-
-    GLOBAL_BIRTHS = 140_000_000
-    GLOBAL_DEATHS = 60_000_000
-    SECONDS_PER_YEAR = 365*24*3600
-
-    if "start" not in st.session_state:
-        st.session_state.start = time.time()
-
-    elapsed = time.time() - st.session_state.start
-    world_pop = get_indicator("WLD","SP.POP.TOTL")
-
-    labels, values = [], []
-
-    for label, members in groups.items():
-        total = 0
-        for c in members:
-            pop = get_indicator(countries.get(c,""),"SP.POP.TOTL")
-            if pop and world_pop:
-                total += (GLOBAL_BIRTHS-GLOBAL_DEATHS)*(pop/world_pop)
-        labels.append(label)
-        values.append(total/SECONDS_PER_YEAR*elapsed if total else 0)
-
-    fig = go.Figure(go.Bar(
-        x=labels,
-        y=values,
-        text=[format_compact(v) for v in values],
-        textposition="outside"
-    ))
-
-    fig.update_layout(
-        title="Estimated population increase since page load",
-        yaxis=dict(autorange=True)
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
+# 🔹 Region explanation block
+with st.sidebar.expander("Region definitions"):
+    for r in selected_items:
+        if r in REGIONS:
+            st.markdown(f"**{r}**")
+            if r in REGION_INFO:
+                st.caption(REGION_INFO[r])
+            st.caption(", ".join(REGIONS[r]))
 
 # ==================================================
 # STATIC MODE
 # ==================================================
-else:
-    tab_compare, tab_trends, tab_map = st.tabs(
-        ["Comparison","Trends","Map"]
-    )
+if mode == "Static":
 
     INDICATORS = {
-        "Population":"SP.POP.TOTL",
-        "GDP":"NY.GDP.MKTP.CD",
-        "GDP per Capita":"NY.GDP.PCAP.CD"
+        "Population": "SP.POP.TOTL",
+        "GDP": "NY.GDP.MKTP.CD",
+        "GDP per Capita": "NY.GDP.PCAP.CD",
+        "Gini Index": "SI.POV.GINI",
     }
 
-    # -------- Comparison --------
+    tab_compare, tab_trends, tab_map = st.tabs(["Comparison","Trends","Map"])
+
+    # ---------- COMPARISON ----------
     with tab_compare:
         metric_label = st.selectbox("Metric", INDICATORS.keys())
         metric = INDICATORS[metric_label]
@@ -197,13 +151,28 @@ else:
         labels, values = [], []
 
         for label, members in groups.items():
-            vals=[]
+            pops, vals = [], []
+
             for c in members:
-                v = get_indicator(countries.get(c,""), metric)
-                if v:
+                code = countries.get(c)
+                v = get_indicator(code, metric)
+                p = get_indicator(code, "SP.POP.TOTL")
+                if v is not None:
                     vals.append(v)
+                if p:
+                    pops.append(p)
+
+            if not vals:
+                agg = None
+            elif metric_label in ["Population", "GDP"]:
+                agg = sum(vals)
+            elif metric_label == "GDP per Capita":
+                agg = sum(v*p for v,p in zip(vals,pops)) / sum(pops)
+            else:  # Gini
+                agg = sum(vals)/len(vals)
+
             labels.append(label)
-            values.append(sum(vals)/len(vals) if vals else None)
+            values.append(agg)
 
         fig = go.Figure(go.Bar(
             x=labels,
@@ -219,7 +188,7 @@ else:
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # -------- Trends --------
+    # ---------- TRENDS ----------
     with tab_trends:
         trend_label = st.selectbox("Trend metric", INDICATORS.keys())
         metric = INDICATORS[trend_label]
@@ -227,16 +196,26 @@ else:
         fig = go.Figure()
 
         for label, members in groups.items():
-            yearly={}
-            count=0
+            yearly, yearly_pop = {}, {}
+
             for c in members:
-                for y,v in get_series(countries.get(c,""),metric):
-                    yearly[y]=yearly.get(y,0)+v
-                count+=1
+                code = countries.get(c)
+                for y,v in get_series(code, metric):
+                    yearly[y] = yearly.get(y,0) + v
+                for y,p in get_series(code, "SP.POP.TOTL"):
+                    yearly_pop[y] = yearly_pop.get(y,0) + p
+
             if yearly:
+                if trend_label == "GDP per Capita":
+                    yvals = [yearly[y]/yearly_pop[y] for y in yearly if y in yearly_pop]
+                    xvals = [y for y in yearly if y in yearly_pop]
+                else:
+                    xvals = list(yearly.keys())
+                    yvals = list(yearly.values())
+
                 fig.add_trace(go.Scatter(
-                    x=list(yearly.keys()),
-                    y=[v/count for v in yearly.values()],
+                    x=xvals,
+                    y=yvals,
                     mode="lines",
                     name=label
                 ))
@@ -248,7 +227,7 @@ else:
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # -------- Map --------
+    # ---------- MAP ----------
     with tab_map:
         vals, locs = [], []
         for name, code in countries.items():
