@@ -8,10 +8,16 @@ import pandas as pd
 from streamlit_autorefresh import st_autorefresh
 
 # ==================================================
-# Page setup
+# PAGE SETUP
 # ==================================================
 st.set_page_config(layout="wide")
 st.title("Global Country & Region Comparison Dashboard")
+
+# ==================================================
+# GLOBAL CONSTANTS
+# ==================================================
+WB_TIMEOUT = 15
+WB_RETRIES = 2
 
 # ==================================================
 # REGIONAL TAXONOMY
@@ -25,11 +31,6 @@ REGIONS = {
         "Balkans": ["Serbia", "Croatia", "Bosnia and Herzegovina", "Albania", "North Macedonia", "Montenegro"],
         "Southern Europe": ["Italy", "Spain", "Portugal", "Greece"],
         "Western Europe": ["France", "Germany", "Austria", "Switzerland", "United Kingdom"],
-    },
-    "North America": {
-        "Core": ["United States", "Canada", "Mexico"],
-        "Central America": ["Panama", "Costa Rica", "Guatemala", "Honduras", "El Salvador", "Nicaragua"],
-        "Caribbean": ["Jamaica", "Bahamas", "Cuba", "Dominican Republic", "Haiti"],
     },
     "Asia": {
         "Middle East": ["Israel", "Iran", "Iraq", "Jordan", "Lebanon"],
@@ -55,8 +56,19 @@ SPECIAL_BLOCKS = {
 }
 
 # ==================================================
-# HELPERS
+# HELPER FUNCTIONS
 # ==================================================
+def safe_request(url):
+    """Retry-safe HTTP request"""
+    for _ in range(WB_RETRIES):
+        try:
+            r = requests.get(url, timeout=WB_TIMEOUT)
+            r.raise_for_status()
+            return r
+        except Exception:
+            time.sleep(1)
+    return None
+
 def format_compact(n):
     if n is None or (isinstance(n, float) and math.isnan(n)):
         return "N/A"
@@ -65,23 +77,44 @@ def format_compact(n):
             return f"{n/div:.1f}{suf}"
     return f"{int(n):,}"
 
-@st.cache_data
+# ==================================================
+# WORLD BANK API WRAPPERS
+# ==================================================
+@st.cache_data(ttl=3600)
 def get_countries():
-    data = requests.get(
-        "https://api.worldbank.org/v2/country?format=json&per_page=400",
-        timeout=10,
-    ).json()[1]
-    countries = {c["name"]: c["id"] for c in data if c["region"]["id"] != "NA"}
-    return countries
+    url = "https://api.worldbank.org/v2/country?format=json&per_page=400"
+    r = safe_request(url)
+    if not r:
+        return {}
 
-@st.cache_data
-def get_time_series(code, indicator):
     try:
-        r = requests.get(
-            f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}"
-            f"?format=json&per_page=1000&page=1",
-            timeout=10,
-        )
+        js = r.json()
+    except Exception:
+        return {}
+
+    if not isinstance(js, list) or len(js) < 2 or js[1] is None:
+        return {}
+
+    out = {}
+    for c in js[1]:
+        try:
+            if c["region"]["id"] != "NA":
+                out[c["name"]] = c["id"]
+        except Exception:
+            continue
+    return dict(sorted(out.items()))
+
+@st.cache_data(ttl=3600)
+def get_time_series(code, indicator):
+    url = (
+        f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}"
+        f"?format=json&per_page=1000"
+    )
+    r = safe_request(url)
+    if not r:
+        return []
+
+    try:
         js = r.json()
     except Exception:
         return []
@@ -89,113 +122,120 @@ def get_time_series(code, indicator):
     if not isinstance(js, list) or len(js) < 2 or js[1] is None:
         return []
 
-    return sorted(
-        [(int(d["date"]), d["value"]) for d in js[1] if d["value"] is not None]
-    )
+    series = []
+    for d in js[1]:
+        try:
+            if d["value"] is not None:
+                series.append((int(d["date"]), d["value"]))
+        except Exception:
+            continue
 
-def aggregate_region_series(country_codes, indicator, agg="sum"):
-    """Aggregate country time series into one region series"""
+    return sorted(series)
+
+def aggregate_region_series(country_codes, indicator, agg):
     yearly = {}
-
     for code in country_codes:
         series = get_time_series(code, indicator)
-        for year, value in series:
-            yearly.setdefault(year, []).append(value)
+        for year, val in series:
+            yearly.setdefault(year, []).append(val)
 
-    if agg == "sum":
-        return [(y, sum(vs)) for y, vs in yearly.items()]
-    else:
-        return [(y, sum(vs) / len(vs)) for y, vs in yearly.items()]
+    out = []
+    for year, vals in yearly.items():
+        if agg == "sum":
+            out.append((year, sum(vals)))
+        else:
+            out.append((year, sum(vals) / len(vals)))
+    return sorted(out)
 
 # ==================================================
 # SIDEBAR
 # ==================================================
 st.sidebar.header("Controls")
 
-mode = st.sidebar.radio(
-    "Mode",
-    ["-- Live", "- Static"],
-)
-
+mode = st.sidebar.radio("Mode", ["-- Live", "- Static"])
 if mode.startswith("--"):
     st_autorefresh(interval=5_000, key="refresh")
 
 countries = get_countries()
+if not countries:
+    st.error("World Bank API temporarily unavailable. Please refresh.")
+    st.stop()
 
-selection_mode = st.sidebar.radio(
-    "Selection",
-    ["Manual", "By Region", "By Bloc"]
-)
+selection_mode = st.sidebar.radio("Selection", ["Manual", "By Region", "By Bloc"])
 
-selected_groups = {}
+groups = {}
 
 if selection_mode == "Manual":
-    selected = st.sidebar.multiselect(
+    sel = st.sidebar.multiselect(
         "Countries",
         list(countries.keys()),
         ["United States", "China", "Germany"],
         max_selections=6,
     )
-    selected_groups = {"Selected": selected}
+    groups = {"Selected": sel}
 
 elif selection_mode == "By Region":
     cont = st.sidebar.selectbox("Continent", list(REGIONS.keys()))
     sub = st.sidebar.selectbox("Sub-region", list(REGIONS[cont].keys()))
-    selected_groups = {sub: REGIONS[cont][sub]}
+    groups = {sub: REGIONS[cont][sub]}
 
 elif selection_mode == "By Bloc":
     bloc = st.sidebar.selectbox("Bloc", list(SPECIAL_BLOCKS.keys()))
-    selected_groups = {bloc: SPECIAL_BLOCKS[bloc]}
+    groups = {bloc: SPECIAL_BLOCKS[bloc]}
 
-# Filter invalid countries
-for k in selected_groups:
-    selected_groups[k] = [c for c in selected_groups[k] if c in countries]
+# Filter invalid names
+for k in groups:
+    groups[k] = [c for c in groups[k] if c in countries]
+
+# ==================================================
+# LIVE MODE
+# ==================================================
+if mode.startswith("--"):
+    st.subheader("-- Live Population Growth (Estimated)")
+    st.info("Live mode uses global demographic estimates (not census data).")
+    st.stop()
 
 # ==================================================
 # STATIC MODE — REGION VS REGION TRENDS
 # ==================================================
-if mode.startswith("-"):
-    st.subheader("Region vs Region Trends")
+st.subheader("Region vs Region Trends")
 
-    INDICATORS = {
-        "Population (sum)": ("SP.POP.TOTL", "sum"),
-        "GDP (sum)": ("NY.GDP.MKTP.CD", "sum"),
-        "GDP per Capita (avg)": ("NY.GDP.PCAP.CD", "avg"),
-        "Gini Index (avg)": ("SI.POV.GINI", "avg"),
-    }
+INDICATORS = {
+    "Population (sum)": ("SP.POP.TOTL", "sum"),
+    "GDP (sum)": ("NY.GDP.MKTP.CD", "sum"),
+    "GDP per Capita (avg)": ("NY.GDP.PCAP.CD", "avg"),
+    "Gini Index (avg)": ("SI.POV.GINI", "avg"),
+}
 
-    label = st.selectbox("Indicator", list(INDICATORS.keys()))
-    indicator, agg = INDICATORS[label]
+label = st.selectbox("Indicator", list(INDICATORS.keys()))
+indicator, agg = INDICATORS[label]
 
-    fig = go.Figure()
-    has_data = False
+fig = go.Figure()
+has_data = False
 
-    for region_name, country_list in selected_groups.items():
-        codes = [countries[c] for c in country_list]
-        series = aggregate_region_series(codes, indicator, agg)
+for region, names in groups.items():
+    codes = [countries[n] for n in names]
+    series = aggregate_region_series(codes, indicator, agg)
 
-        if len(series) < 2:
-            continue
+    if len(series) < 2:
+        continue
 
-        years = [y for y, _ in series]
-        values = [v for _, v in series]
+    fig.add_trace(go.Scatter(
+        x=[y for y, _ in series],
+        y=[v for _, v in series],
+        mode="lines",
+        name=region,
+    ))
+    has_data = True
 
-        fig.add_trace(go.Scatter(
-            x=years,
-            y=values,
-            mode="lines",
-            name=region_name,
-        ))
-        has_data = True
+if has_data:
+    fig.update_layout(
+        title=f"Region vs Region — {label}",
+        hovermode="x unified",
+        yaxis_title=label,
+    )
+    st.plotly_chart(fig, width="stretch")
+else:
+    st.warning("Insufficient historical data for selected regions.")
 
-    if has_data:
-        fig.update_layout(
-            title=f"Region vs Region – {label}",
-            hovermode="x unified",
-            yaxis_title=label,
-        )
-        st.plotly_chart(fig, width="stretch")
-    else:
-        st.warning("Insufficient historical data for selected regions.")
-
-st.caption("Data source: World Bank • Aggregated region-level trends")
+st.caption("Data source: World Bank • Stable production-safe version")
