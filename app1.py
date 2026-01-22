@@ -75,7 +75,7 @@ def get_series(code, indicator):
 REGIONS = {
     "Baltic States": ["Estonia","Latvia","Lithuania"],
     "Benelux": ["Belgium","Netherlands","Luxembourg"],
-    "Scandinavia": ["Sweden","Norway","Denmark","Finland"],
+    "Scandinavia": ["Sweden","Norway","Denmark","Finland", "Iceland"],
     "Western Europe": ["Germany","France","Austria","Switzerland"],
     "Southern Europe": ["Italy","Spain","Portugal","Greece"],
     "Balkans": ["Serbia","Croatia","Bosnia and Herzegovina","Albania","North Macedonia", "Slovenia"],
@@ -231,7 +231,7 @@ if mode == "Static":
         "GDP": "NY.GDP.MKTP.CD",
         "GDP per Capita": "NY.GDP.PCAP.CD",
         "Gini Index": "SI.POV.GINI",
-    
+
          # Economy & society
         "Population": "SP.POP.TOTL",
         "GDP": "NY.GDP.MKTP.CD",
